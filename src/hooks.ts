@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { supabase } from './lib/supabase';
+import { db } from './db';
 import type {
   InventoryItem,
   RestockEntry,
@@ -7,11 +7,43 @@ import type {
   ProductInput,
   RestockInput,
   ShoppingItemInput,
+  TrackingMode,
 } from './types';
 import { restockAddAmount } from './types';
-import { savePriceEntry } from './lib/priceHistory';
 
 const sortAlpha = (a: InventoryItem, b: InventoryItem) => a.product.localeCompare(b.product);
+
+function generateId(): string {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+async function insertPriceEntry(opts: {
+  inventoryId: string;
+  price: number;
+  restockedAt: string;
+  store?: string | null;
+  notes?: string | null;
+  trackingMode?: TrackingMode | null;
+  packagesPurchased?: number | null;
+  quantity?: number;
+}): Promise<void> {
+  await db.restock_history.add({
+    id: generateId(),
+    inventory_id: opts.inventoryId,
+    price: opts.price,
+    quantity: opts.quantity ?? 0,
+    packages_purchased: opts.packagesPurchased ?? null,
+    tracking_mode: opts.trackingMode ?? null,
+    restocked_at: opts.restockedAt,
+    store: opts.store?.trim() || null,
+    notes: opts.notes?.trim() || null,
+  });
+}
 
 export function useInventory() {
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -21,14 +53,11 @@ export function useInventory() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data, error } = await supabase
-      .from('inventory')
-      .select('*')
-      .order('product', { ascending: true });
-    if (error) {
-      setError(error.message);
-    } else {
-      setItems((data as InventoryItem[]) ?? []);
+    try {
+      const data = await db.inventory.orderBy('product').toArray();
+      setItems(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
     setLoading(false);
   }, []);
@@ -38,30 +67,31 @@ export function useInventory() {
   }, [load]);
 
   const addItem = useCallback(async (input: ProductInput) => {
-    const { data, error } = await supabase
-      .from('inventory')
-      .insert({
-        product: input.product.trim(),
-        brand: input.brand?.trim() || null,
-        variant: input.variant?.trim() || null,
-        specification: input.specification?.trim() || null,
-        unit: input.unit.trim(),
-        tracking_mode: input.tracking_mode,
-        purchase_package: input.purchase_package?.trim() || null,
-        units_per_package: input.units_per_package ?? 1,
-        count: input.count,
-        min_stock: input.min_stock ?? 0,
-        notes: input.notes?.trim() || null,
-        is_on_manual_list: false,
-      })
-      .select()
-      .single();
-    if (error) throw error;
-    if (data) setItems((prev) => [...prev, data as InventoryItem].sort(sortAlpha));
-    const created = data as InventoryItem;
-    if (created && input.price != null && input.price > 0) {
-      await savePriceEntry({
-        inventoryId: created.id,
+    const id = generateId();
+    const now = new Date().toISOString();
+    const newItem: InventoryItem = {
+      id,
+      product: input.product.trim(),
+      brand: input.brand?.trim() || null,
+      variant: input.variant?.trim() || null,
+      specification: input.specification?.trim() || null,
+      package_size: null,
+      unit: input.unit.trim(),
+      tracking_mode: input.tracking_mode,
+      purchase_package: input.purchase_package?.trim() || null,
+      units_per_package: input.units_per_package ?? 1,
+      count: input.count,
+      min_stock: input.min_stock ?? 0,
+      notes: input.notes?.trim() || null,
+      is_on_manual_list: false,
+      opened_at: input.openedAt ?? null,
+      created_at: now,
+    };
+    await db.inventory.add(newItem);
+    setItems((prev) => [...prev, newItem].sort(sortAlpha));
+    if (input.price != null && input.price > 0) {
+      await insertPriceEntry({
+        inventoryId: id,
         price: input.price,
         restockedAt: input.purchaseDate || new Date().toISOString().split('T')[0],
         store: input.store ?? null,
@@ -69,33 +99,32 @@ export function useInventory() {
         quantity: 0,
       });
     }
-    return created;
+    return newItem;
   }, []);
 
   const updateItem = useCallback(async (id: string, input: ProductInput) => {
-    const { data, error } = await supabase
-      .from('inventory')
-      .update({
-        product: input.product.trim(),
-        brand: input.brand?.trim() || null,
-        variant: input.variant?.trim() || null,
-        specification: input.specification?.trim() || null,
-        unit: input.unit.trim(),
-        tracking_mode: input.tracking_mode,
-        purchase_package: input.purchase_package?.trim() || null,
-        units_per_package: input.units_per_package ?? 1,
-        count: input.count,
-        min_stock: input.min_stock ?? 0,
-        notes: input.notes?.trim() || null,
-      })
-      .eq('id', id)
-      .select()
-      .single();
-    if (error) throw error;
-    if (data)
-      setItems((prev) => prev.map((it) => (it.id === id ? (data as InventoryItem) : it)).sort(sortAlpha));
+    const existing = await db.inventory.get(id);
+    if (!existing) throw new Error('Inventory item not found');
+    const updated: InventoryItem = {
+      ...existing,
+      product: input.product.trim(),
+      brand: input.brand?.trim() || null,
+      variant: input.variant?.trim() || null,
+      specification: input.specification?.trim() || null,
+      package_size: existing.package_size,
+      unit: input.unit.trim(),
+      tracking_mode: input.tracking_mode,
+      purchase_package: input.purchase_package?.trim() || null,
+      units_per_package: input.units_per_package ?? 1,
+      count: input.count,
+      min_stock: input.min_stock ?? 0,
+      notes: input.notes?.trim() || null,
+      opened_at: input.openedAt ?? existing.opened_at,
+    };
+    await db.inventory.put(updated);
+    setItems((prev) => prev.map((it) => (it.id === id ? updated : it)).sort(sortAlpha));
     if (input.price != null && input.price > 0) {
-      await savePriceEntry({
+      await insertPriceEntry({
         inventoryId: id,
         price: input.price,
         restockedAt: input.purchaseDate || new Date().toISOString().split('T')[0],
@@ -110,11 +139,21 @@ export function useInventory() {
     setItems((prev) =>
       prev.map((it) => (it.id === id ? { ...it, count: Math.max(0, it.count + delta) } : it)),
     );
-    const current = await supabase.from('inventory').select('count').eq('id', id).maybeSingle();
-    if (current.error) throw current.error;
-    const next = Math.max(0, (current.data?.count ?? 0) + delta);
-    const { error } = await supabase.from('inventory').update({ count: next }).eq('id', id);
-    if (error) throw error;
+    const existing = await db.inventory.get(id);
+    if (!existing) throw new Error('Inventory item not found');
+    const next = Math.max(0, existing.count + delta);
+    const updateData: Partial<InventoryItem> = { count: next };
+    if (delta < 0 && existing.opened_at === null) {
+      updateData.opened_at = new Date().toISOString();
+    }
+    await db.inventory.update(id, updateData);
+    if (delta < 0 && existing.opened_at === null) {
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === id ? { ...it, count: next, opened_at: updateData.opened_at! } : it,
+        ),
+      );
+    }
   }, []);
 
   const restock = useCallback(
@@ -125,25 +164,27 @@ export function useInventory() {
         input.unitsPerPackage,
         input.unitOverride,
       );
-      const { data: cur } = await supabase.from('inventory').select('count').eq('id', id).maybeSingle();
-      const currentCount = cur?.count ?? 0;
-      const newCount = currentCount + addUnits;
-      const { error: updErr } = await supabase
-        .from('inventory')
-        .update({ count: newCount, is_on_manual_list: false })
-        .eq('id', id);
-      if (updErr) throw updErr;
-      const { error: histErr } = await supabase.from('restock_history').insert({
-        inventory_id: id,
-        price: input.price,
-        quantity: addUnits,
-        packages_purchased: input.packagesPurchased,
-        tracking_mode: input.trackingMode,
-        restocked_at: input.restockedAt,
-        store: input.store?.trim() || null,
-        notes: input.notes?.trim() || null,
+      const newCount = await db.transaction('rw', [db.inventory, db.restock_history], async () => {
+        const existing = await db.inventory.get(id);
+        if (!existing) throw new Error('Inventory item not found');
+        const newCount = existing.count + addUnits;
+        await db.inventory.update(id, {
+          count: newCount,
+          is_on_manual_list: false,
+        });
+        await db.restock_history.add({
+          id: generateId(),
+          inventory_id: id,
+          price: input.price,
+          quantity: addUnits,
+          packages_purchased: input.packagesPurchased,
+          tracking_mode: input.trackingMode,
+          restocked_at: input.restockedAt,
+          store: input.store?.trim() || null,
+          notes: input.notes?.trim() || null,
+        });
+        return newCount;
       });
-      if (histErr) throw histErr;
       setItems((prev) =>
         prev.map((it) => (it.id === id ? { ...it, count: newCount, is_on_manual_list: false } : it)),
       );
@@ -152,8 +193,10 @@ export function useInventory() {
   );
 
   const deleteItem = useCallback(async (id: string) => {
-    const { error } = await supabase.from('inventory').delete().eq('id', id);
-    if (error) throw error;
+    await db.transaction('rw', [db.inventory, db.restock_history], async () => {
+      await db.restock_history.where('inventory_id').equals(id).delete();
+      await db.inventory.delete(id);
+    });
     setItems((prev) => prev.filter((it) => it.id !== id));
   }, []);
 
@@ -178,14 +221,11 @@ export function useShoppingItems() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    const { data, error } = await supabase
-      .from('shopping_items')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) {
-      setError(error.message);
-    } else {
-      setItems((data as ShoppingItem[]) ?? []);
+    try {
+      const data = await db.shopping_items.orderBy('created_at').reverse().toArray();
+      setItems(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
     setLoading(false);
   }, []);
@@ -195,46 +235,41 @@ export function useShoppingItems() {
   }, [load]);
 
   const addShoppingItem = useCallback(async (input: ShoppingItemInput) => {
-    const { data, error } = await supabase
-      .from('shopping_items')
-      .insert({
-        product: input.product.trim(),
-        brand: input.brand?.trim() || null,
-        variant: input.variant?.trim() || null,
-        notes: input.notes?.trim() || null,
-      })
-      .select()
-      .single();
-    if (error) throw error;
-    if (data) setItems((prev) => [data as ShoppingItem, ...prev]);
-    return data as ShoppingItem;
+    const newItem: ShoppingItem = {
+      id: generateId(),
+      product: input.product.trim(),
+      brand: input.brand?.trim() || null,
+      variant: input.variant?.trim() || null,
+      notes: input.notes?.trim() || null,
+      is_done: false,
+      created_at: new Date().toISOString(),
+    };
+    await db.shopping_items.add(newItem);
+    setItems((prev) => [newItem, ...prev]);
+    return newItem;
   }, []);
 
   const updateShoppingItem = useCallback(async (id: string, input: ShoppingItemInput) => {
-    const { data, error } = await supabase
-      .from('shopping_items')
-      .update({
-        product: input.product.trim(),
-        brand: input.brand?.trim() || null,
-        variant: input.variant?.trim() || null,
-        notes: input.notes?.trim() || null,
-      })
-      .eq('id', id)
-      .select()
-      .single();
-    if (error) throw error;
-    if (data) setItems((prev) => prev.map((it) => (it.id === id ? (data as ShoppingItem) : it)));
+    const existing = await db.shopping_items.get(id);
+    if (!existing) throw new Error('Shopping item not found');
+    const updated: ShoppingItem = {
+      ...existing,
+      product: input.product.trim(),
+      brand: input.brand?.trim() || null,
+      variant: input.variant?.trim() || null,
+      notes: input.notes?.trim() || null,
+    };
+    await db.shopping_items.put(updated);
+    setItems((prev) => prev.map((it) => (it.id === id ? updated : it)));
   }, []);
 
   const toggleShoppingItemDone = useCallback(async (id: string, value: boolean) => {
     setItems((prev) => prev.map((it) => (it.id === id ? { ...it, is_done: value } : it)));
-    const { error } = await supabase.from('shopping_items').update({ is_done: value }).eq('id', id);
-    if (error) throw error;
+    await db.shopping_items.update(id, { is_done: value });
   }, []);
 
   const deleteShoppingItem = useCallback(async (id: string) => {
-    const { error } = await supabase.from('shopping_items').delete().eq('id', id);
-    if (error) throw error;
+    await db.shopping_items.delete(id);
     setItems((prev) => prev.filter((it) => it.id !== id));
   }, []);
 
@@ -263,15 +298,18 @@ export function useRestockHistory(inventoryId: string | null) {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    supabase
-      .from('restock_history')
-      .select('*')
-      .eq('inventory_id', inventoryId)
-      .order('restocked_at', { ascending: true })
-      .then(({ data, error }) => {
+    db.restock_history
+      .where('inventory_id')
+      .equals(inventoryId)
+      .sortBy('restocked_at')
+      .then((data) => {
         if (cancelled) return;
-        if (error) setError(error.message);
-        else setHistory((data as RestockEntry[]) ?? []);
+        setHistory(data);
+        setLoading(false);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setError(e instanceof Error ? e.message : String(e));
         setLoading(false);
       });
     return () => {
