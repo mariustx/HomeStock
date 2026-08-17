@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    @apply bg-neutral-950 text-white antialiased;
+    font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+    overscroll-behavior-y: none;
+  }
+  /* Style native form controls for dark mode */
+  select,
+  option {
+    background-color: #171717;
+    color: #fafafa;
+  }
+  input,
+  select,
+  textarea {
+    -webkit-appearance: none;
+    appearance: none;
+  }
+}
+
+@layer components {
+  .input {
+    @apply w-full h-11 px-3.5 rounded-xl bg-neutral-800 border border-neutral-700 text-white text-sm
+      placeholder:text-neutral-500
+      focus:outline-none focus:ring-2 focus:ring-emerald-500/60 focus:border-emerald-500
+      transition;
+  }
+  .btn-primary {
+    @apply h-11 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-medium text-sm
+      active:scale-[0.98] transition;
+  }
+  .btn-ghost {
+    @apply h-11 px-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-white font-medium text-sm
+      active:scale-[0.98] transition;
+  }
+  .btn-danger {
+    @apply h-11 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-medium text-sm
+      active:scale-[0.98] transition;
+  }
+  /* Large, easy-to-tap touch target for +/- adjusters */
+  .touch-target {
+    @apply h-11 w-11;
+  }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes slideUp {
+  from { transform: translateY(16px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-8px); }
+  40% { transform: translateX(8px); }
+  60% { transform: translateX(-5px); }
+  80% { transform: translateX(5px); }
+}
