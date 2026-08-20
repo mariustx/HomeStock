@@ -13,7 +13,6 @@ import {
   type PurchaseState,
 } from './lib/purchase';
 import { fetchStoreSuggestions } from './lib/priceHistory';
-import { updateOpenedAt } from './lib/supabase';
 
 interface AddItemModalProps {
   open: boolean;
@@ -291,12 +290,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
         purchaseDate: parsed.date,
         store: parsed.store,
       });
-      const openedAtVal = dateInputToTimestamptz(form.openedAt);
-      const editId = itemToEdit?.id ?? null;
-      const openedAtChanged = form.openedAt !== initialForm.openedAt;
-      if (editId && openedAtChanged) {
-        await updateOpenedAt(editId, openedAtVal);
-      }
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save item.');

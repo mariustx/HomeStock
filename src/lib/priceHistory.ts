@@ -1,8 +1,8 @@
-import { supabase } from './supabase';
+import { db } from '../db';
 import type { TrackingMode } from '../types';
 
 /**
- * Insert a row into restock_history (the shared price-history table)
+ * Insert a row into restock_history (the local Dexie table)
  * without changing inventory stock. Used when recording a spotted price
  * during Add/Edit Product (e.g. price seen in store, stock still 0).
  */
@@ -16,7 +16,16 @@ export async function savePriceEntry(opts: {
   packagesPurchased?: number | null;
   quantity?: number;
 }): Promise<void> {
-  const { error } = await supabase.from('restock_history').insert({
+  const id = typeof crypto !== 'undefined' && crypto.randomUUID 
+    ? crypto.randomUUID() 
+    : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+        const r = (Math.random() * 16) | 0;
+        const v = c === 'x' ? r : (r & 0x3) | 0x8;
+        return v.toString(16);
+      });
+
+  await db.restock_history.add({
+    id,
     inventory_id: opts.inventoryId,
     price: opts.price,
     quantity: opts.quantity ?? 0,
@@ -26,26 +35,26 @@ export async function savePriceEntry(opts: {
     store: opts.store?.trim() || null,
     notes: opts.notes?.trim() || null,
   });
-  if (error) throw error;
 }
 
 /**
  * Gather distinct store names previously used across the user's inventory.
  */
 export async function fetchStoreSuggestions(): Promise<string[]> {
-  const { data, error } = await supabase
-    .from('restock_history')
-    .select('store')
-    .not('store', 'is', null);
-  if (error || !data) return [];
-  const seen = new Set<string>();
-  const out: string[] = [];
-  for (const row of data as { store: string | null }[]) {
-    const s = (row.store ?? '').trim();
-    if (s && !seen.has(s.toLowerCase())) {
-      seen.add(s.toLowerCase());
-      out.push(s);
+  try {
+    const data = await db.restock_history.toArray();
+    const seen = new Set<string>();
+    const out: string[] = [];
+    for (const row of data) {
+      const s = (row.store ?? '').trim();
+      if (s && !seen.has(s.toLowerCase())) {
+        seen.add(s.toLowerCase());
+        out.push(s);
+      }
     }
+    return out;
+  } catch (e) {
+    console.error('Failed to fetch store suggestions:', e);
+    return [];
   }
-  return out;
 }

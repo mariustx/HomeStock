@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Package, ShoppingCart, BarChart3, Plus, AlertTriangle, LogOut } from 'lucide-react';
-import type { Session } from '@supabase/supabase-js';
+import { Package, ShoppingCart, BarChart3, Plus, AlertTriangle } from 'lucide-react';
 import type { TabKey, InventoryItem, ShoppingItem, ProductInput, RestockInput, ShoppingItemInput } from './types';
 import { useInventory, useShoppingItems } from './hooks';
 import { InventoryView } from './InventoryView';
@@ -8,9 +7,6 @@ import { ShoppingView } from './ShoppingView';
 import { InsightsView } from './InsightsView';
 import { AddItemModal } from './AddItemModal';
 import { ShoppingItemModal } from './ShoppingItemModal';
-import { LoginScreen } from './LoginScreen';
-import { supabase } from './lib/supabase';
-import { signOut } from './lib/auth';
 
 const TABS: TabKey[] = ['inventory', 'shopping', 'insights'];
 
@@ -28,8 +24,6 @@ function outOfStockProductCount(items: InventoryItem[]): number {
 }
 
 export default function App() {
-  const [authed, setAuthed] = useState<boolean>(false);
-  const [restoring, setRestoring] = useState<boolean>(true);
   const [tab, setTab] = useState<TabKey>('inventory');
   const [showAdd, setShowAdd] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
@@ -59,45 +53,6 @@ export default function App() {
 
   const shoppingCount =
     outOfStockProductCount(items) + shoppingItems.filter((s) => !s.is_done).length;
-
-  // Restore the Supabase session on first load and subscribe to auth changes
-  // (login/logout from any tab). Wrap async getSession in an async IIFE so we
-  // never await directly inside the onAuthStateChange callback (which would
-  // deadlock the event processing).
-  useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase.auth.getSession();
-      if (cancelled) return;
-      setAuthed(!!data.session);
-      setRestoring(false);
-    })();
-    const { data: sub } = supabase.auth.onAuthStateChange((_event: string, session: Session | null) => {
-      setAuthed(!!session);
-      setRestoring(false);
-    });
-    return () => {
-      cancelled = true;
-      sub.subscription.unsubscribe();
-    };
-  }, []);
-
-  const handleLogout = async () => {
-    await signOut();
-    setAuthed(false);
-  };
-
-  if (restoring) {
-    return (
-      <div className="min-h-screen bg-neutral-950 flex items-center justify-center">
-        <div className="h-8 w-8 border-2 border-neutral-700 border-t-emerald-400 rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  if (!authed) {
-    return <LoginScreen onSuccess={() => setAuthed(true)} />;
-  }
 
   const closeProductModal = () => {
     setShowAdd(false);
@@ -191,13 +146,6 @@ export default function App() {
                 Retry
               </button>
             )}
-            <button
-              onClick={handleLogout}
-              className="h-9 w-9 grid place-items-center text-neutral-500 hover:text-white hover:bg-neutral-800 rounded-lg active:scale-95 transition"
-              aria-label="Log out"
-            >
-              <LogOut className="h-4 w-4" />
-            </button>
           </div>
         </div>
 
