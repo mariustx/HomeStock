@@ -1,6 +1,6 @@
 {
-  "short_name": "Household",
-  "name": "Household Inventory",
+  "short_name": "HomeStock",
+  "name": "HomeStock",
   "icons": [
     {
       "src": "/app-icon.png",
