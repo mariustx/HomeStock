@@ -1,12 +1,13 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, lazy, Suspense } from 'react';
 import { Package, ShoppingCart, BarChart3, Plus, AlertTriangle } from 'lucide-react';
 import type { TabKey, InventoryItem, ShoppingItem, ProductInput, RestockInput, ShoppingItemInput } from './types';
 import { useInventory, useShoppingItems } from './hooks';
 import { InventoryView } from './InventoryView';
 import { ShoppingView } from './ShoppingView';
-import { InsightsView } from './InsightsView';
 import { AddItemModal } from './AddItemModal';
 import { ShoppingItemModal } from './ShoppingItemModal';
+
+const InsightsView = lazy(() => import('./InsightsView').then(m => ({ default: m.InsightsView })));
 
 const TABS: TabKey[] = ['inventory', 'shopping', 'insights'];
 
@@ -200,7 +201,16 @@ export default function App() {
             onDeleteShoppingItem={deleteShoppingItem}
           />
         )}
-        {tab === 'insights' && <InsightsView items={items} />}
+        {tab === 'insights' && (
+          <Suspense fallback={
+            <div className="flex-1 flex flex-col items-center justify-center p-8 text-slate-400">
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-slate-700 border-t-emerald-500 mb-2"></div>
+              <span>Loading insights...</span>
+            </div>
+          }>
+            <InsightsView items={items} />
+          </Suspense>
+        )}
       </main>
 
       {/* Floating action button — hidden on Insights to avoid covering the chart */}
