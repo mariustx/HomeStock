@@ -12,9 +12,9 @@ export default defineConfig({
       injectRegister: 'auto',
       includeAssets: ['app-icon.png', 'favicon.ico', 'robots.txt', 'apple-touch-icon.png'],
       manifest: {
-        name: 'Household Inventory',
-        short_name: 'Household',
-        description: 'Track household stock and purchase history locally',
+        name: 'HomeStock',
+        short_name: 'HomeStock',
+        description: 'Track HomeStock and purchase history locally',
         theme_color: '#000000',
         background_color: '#000000',
         display: 'standalone',
