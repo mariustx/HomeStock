@@ -19,6 +19,8 @@ export default defineConfig({
         background_color: '#000000',
         display: 'standalone',
         orientation: 'portrait',
+        scope: '/HomeStock/',
+        start_url: '/HomeStock/',
         icons: [
           {
             src: 'app-icon.png',
