@@ -1,20 +1,29 @@
 {
   "short_name": "HomeStock",
   "name": "HomeStock",
+  "description": "Track HomeStock and purchase history locally",
   "icons": [
     {
-      "src": "/app-icon.png",
+      "src": "pwa-192x192.png",
       "sizes": "192x192",
       "type": "image/png"
     },
     {
-      "src": "/app-icon.png",
+      "src": "pwa-512x512.png",
       "sizes": "512x512",
       "type": "image/png"
+    },
+    {
+      "src": "pwa-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
     }
   ],
-  "start_url": "/",
+  "start_url": "/HomeStock/",
+  "scope": "/HomeStock/",
   "background_color": "#000000",
   "theme_color": "#000000",
-  "display": "standalone"
+  "display": "standalone",
+  "orientation": "portrait"
 }
