@@ -54,7 +54,8 @@ export async function exportBackup(): Promise<void> {
 
   const json = JSON.stringify(backup, null, 2);
   const dateStr = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-  const filename = `HomeStock-backup-${dateStr}.json`;
+  const timeStr = new Date().toISOString().split('T')[1].split('.')[0].replace(':', '-'); // HH-MM-SS
+  const filename = `HomeStock-backup-${dateStr}-${timeStr}.json`;
 
   // Build a proper File with the correct MIME type so the share sheet and
   // file manager both recognise it as a JSON document.
