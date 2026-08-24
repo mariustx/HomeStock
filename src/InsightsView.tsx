@@ -3,7 +3,6 @@ import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianG
 import { TrendingUp, LineChart as LineIcon } from 'lucide-react';
 import { pluralize, comparablePrice, formatComparable, type InventoryItem, type RestockEntry } from './types';
 import { useRestockHistory } from './hooks';
-import { BackupSection } from './BackupSection';
 
 interface InsightsViewProps {
   items: InventoryItem[];
@@ -228,11 +227,6 @@ export function InsightsView({ items }: InsightsViewProps) {
           </div>
         </>
       )}
-
-      {/* ── Backup & Restore ─────────────────────────────────────────────── */}
-      <div className="pt-2">
-        <BackupSection />
-      </div>
     </div>
   );
 }

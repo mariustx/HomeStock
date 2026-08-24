@@ -6,6 +6,7 @@ import { InventoryView } from './InventoryView';
 import { ShoppingView } from './ShoppingView';
 import { AddItemModal } from './AddItemModal';
 import { ShoppingItemModal } from './ShoppingItemModal';
+import { MoreMenu } from './MoreMenu';
 
 const InsightsView = lazy(() => import('./InsightsView').then(m => ({ default: m.InsightsView })));
 
@@ -147,6 +148,7 @@ export default function App() {
                 Retry
               </button>
             )}
+            <MoreMenu />
           </div>
         </div>
 
