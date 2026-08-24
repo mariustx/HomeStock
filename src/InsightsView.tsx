@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Dot } from 'recharts';
 import { TrendingUp, LineChart as LineIcon } from 'lucide-react';
-import { pluralize, computeComparablePrice, formatComparable, type InventoryItem, type RestockEntry } from './types';
+import { pluralize, formatPriceWithBasis, type PriceBasis, type InventoryItem, type RestockEntry } from './types';
 import { useRestockHistory } from './hooks';
 
 interface InsightsViewProps {
@@ -13,9 +13,10 @@ interface ChartPoint {
   ts: number;
   price: number;
   qty: number;
-  comparable: string | null;
-  comparablePriceNum: number | null;
-  comparableUnitLabel: string | null;
+  /** Formatted price display, e.g. "3.99 RON/kg" or "3.50 RON" */
+  priceDisplay: string;
+  /** The price_basis for this specific entry, or null if none recorded */
+  priceBasis: PriceBasis | null;
 }
 
 export function InsightsView({ items }: InsightsViewProps) {
@@ -32,9 +33,9 @@ export function InsightsView({ items }: InsightsViewProps) {
         .filter((h) => h.price !== null && !Number.isNaN(Number(h.price)) && Number(h.price) > 0)
         .map((h) => {
           const priceNum = Number(h.price);
-          const compQty = h.comparison_quantity != null ? h.comparison_quantity : (selectedItem?.comparison_quantity ?? null);
-          const compUnit = h.comparison_unit != null ? h.comparison_unit : (selectedItem?.comparison_unit ?? null);
-          const cp = computeComparablePrice(priceNum, compQty, compUnit);
+          // Use only this entry's own price_basis — never fall back to the product's current basis.
+          // A historical entry without a basis remains a plain price.
+          const basis = (h.price_basis as PriceBasis | undefined) ?? null;
 
           return {
             date: new Date(h.restocked_at).toLocaleDateString(undefined, {
@@ -45,15 +46,15 @@ export function InsightsView({ items }: InsightsViewProps) {
             ts: new Date(h.restocked_at).getTime(),
             price: priceNum,
             qty: h.quantity,
-            comparable: cp ? formatComparable(cp.price, cp.unitLabel) : null,
-            comparablePriceNum: cp ? cp.price : null,
-            comparableUnitLabel: cp ? cp.unitLabel : null,
+            priceDisplay: formatPriceWithBasis(priceNum, basis) || `${priceNum.toFixed(2)} RON`,
+            priceBasis: basis,
           };
         })
         .sort((a, b) => a.ts - b.ts),
-    [history, selectedItem?.comparison_quantity, selectedItem?.comparison_unit],
+    [history],
   );
 
+  // Basic stats over ALL price entries regardless of basis
   const stats = useMemo(() => {
     if (chartData.length === 0) return null;
     const prices = chartData.map((d) => d.price);
@@ -66,11 +67,42 @@ export function InsightsView({ items }: InsightsViewProps) {
     return { avg, min, max, latest, change };
   }, [chartData]);
 
-  const latestComparable = useMemo(() => {
-    const validCompPoints = chartData.filter((d) => d.comparable !== null);
-    if (validCompPoints.length === 0) return null;
-    return validCompPoints[validCompPoints.length - 1].comparable;
+  // Per-basis stats: group by basis, only compare entries that share the same basis.
+  // Entries without a basis are excluded from per-basis statistics.
+  const basisStats = useMemo(() => {
+    const groups = new Map<PriceBasis, number[]>();
+    for (const point of chartData) {
+      if (!point.priceBasis) continue;
+      const existing = groups.get(point.priceBasis) ?? [];
+      existing.push(point.price);
+      groups.set(point.priceBasis, existing);
+    }
+
+    const result: Array<{
+      basis: PriceBasis;
+      avg: number;
+      min: number;
+      max: number;
+      latest: number;
+      count: number;
+    }> = [];
+
+    for (const [basis, prices] of groups.entries()) {
+      if (prices.length === 0) continue;
+      const avg = prices.reduce((s, p) => s + p, 0) / prices.length;
+      result.push({
+        basis,
+        avg,
+        min: Math.min(...prices),
+        max: Math.max(...prices),
+        latest: prices[prices.length - 1],
+        count: prices.length,
+      });
+    }
+    return result;
   }, [chartData]);
+
+  const latestEntry = chartData.length > 0 ? chartData[chartData.length - 1] : null;
 
   return (
     <div className="px-4 pb-4 space-y-4">
@@ -113,6 +145,7 @@ export function InsightsView({ items }: InsightsViewProps) {
         </div>
       ) : (
         <>
+          {/* Basic price stats */}
           {stats && (
             <div className="grid grid-cols-3 gap-2">
               <Stat label="Latest" value={`${stats.latest.toFixed(2)} RON`} />
@@ -125,12 +158,40 @@ export function InsightsView({ items }: InsightsViewProps) {
             </div>
           )}
 
-          {latestComparable && (
+          {/* Latest entry price display */}
+          {latestEntry && (
             <div className="bg-emerald-950/30 border border-emerald-900/50 rounded-2xl p-3 flex items-center justify-between">
-              <span className="text-xs text-neutral-400">
-                Comparable price
+              <span className="text-xs text-neutral-400">Latest price</span>
+              <span className="text-sm font-semibold text-emerald-400 tabular-nums">
+                {latestEntry.priceDisplay}
               </span>
-              <span className="text-sm font-semibold text-emerald-400 tabular-nums">{latestComparable}</span>
+            </div>
+          )}
+
+          {/* Per-basis comparable statistics — only groups with 2+ entries for meaningful stats */}
+          {basisStats.length > 0 && (
+            <div className="bg-neutral-900/70 border border-neutral-800 rounded-2xl p-4 space-y-2">
+              <h3 className="text-sm font-medium text-neutral-300">Price per basis</h3>
+              <p className="text-xs text-neutral-500">Only entries sharing the same basis are compared.</p>
+              {basisStats.map((bs) => (
+                <div
+                  key={bs.basis}
+                  className="rounded-xl bg-neutral-800/40 border border-neutral-800 px-3 py-2.5 flex items-center justify-between gap-2"
+                >
+                  <span className="text-xs text-neutral-400 shrink-0">RON/{bs.basis}</span>
+                  <div className="flex items-center gap-3 text-xs tabular-nums">
+                    <span className="text-neutral-500">
+                      avg <span className="text-neutral-200">{bs.avg.toFixed(2)}</span>
+                    </span>
+                    <span className="text-neutral-500">
+                      min <span className="text-emerald-400">{bs.min.toFixed(2)}</span>
+                    </span>
+                    <span className="text-neutral-500">
+                      max <span className="text-red-400">{bs.max.toFixed(2)}</span>
+                    </span>
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 
@@ -180,9 +241,9 @@ export function InsightsView({ items }: InsightsViewProps) {
                     labelStyle={{ color: '#a3a3a3' }}
                     formatter={((value: number, _name: string, props: { payload?: ChartPoint }) => {
                       const p = props?.payload;
-                      const qty = p?.qty ?? 1;
-                      const lines = [`${value.toFixed(2)} RON`, `×${qty} ${pluralize('unit', qty)}`];
-                      if (p?.comparable) lines.push(p.comparable);
+                      const lines: string[] = [p?.priceDisplay ?? `${value.toFixed(2)} RON`];
+                      const qty = p?.qty ?? 0;
+                      if (qty > 0) lines.push(`×${qty} ${pluralize('unit', qty)}`);
                       return lines;
                     }) as unknown as React.ComponentProps<typeof Tooltip>['formatter']}
                   />
@@ -211,23 +272,31 @@ export function InsightsView({ items }: InsightsViewProps) {
               {history
                 .slice()
                 .reverse()
-                .map((h: RestockEntry) => (
-                  <li key={h.id} className="py-2.5 flex items-center justify-between text-sm">
-                    <span className="text-neutral-400">
-                      {new Date(h.restocked_at).toLocaleDateString(undefined, {
-                        month: 'short',
-                        day: 'numeric',
-                        year: 'numeric',
-                      })}
-                    </span>
-                    <span className="flex items-center gap-3">
-                      <span className="text-neutral-500">×{h.quantity}</span>
-                      <span className="text-white font-medium tabular-nums">
-                        {h.price !== null ? `${Number(h.price).toFixed(2)} RON` : '—'}
+                .map((h: RestockEntry) => {
+                  const priceNum = h.price != null ? Number(h.price) : null;
+                  const basis = (h.price_basis as PriceBasis | undefined) ?? null;
+                  const display =
+                    priceNum != null && !Number.isNaN(priceNum) && priceNum > 0
+                      ? formatPriceWithBasis(priceNum, basis) || `${priceNum.toFixed(2)} RON`
+                      : '—';
+                  return (
+                    <li key={h.id} className="py-2.5 flex items-center justify-between text-sm">
+                      <span className="text-neutral-400">
+                        {new Date(h.restocked_at).toLocaleDateString(undefined, {
+                          month: 'short',
+                          day: 'numeric',
+                          year: 'numeric',
+                        })}
                       </span>
-                    </span>
-                  </li>
-                ))}
+                      <span className="flex items-center gap-3">
+                        {h.quantity > 0 && (
+                          <span className="text-neutral-500">×{h.quantity}</span>
+                        )}
+                        <span className="text-white font-medium tabular-nums">{display}</span>
+                      </span>
+                    </li>
+                  );
+                })}
             </ul>
           </div>
         </>

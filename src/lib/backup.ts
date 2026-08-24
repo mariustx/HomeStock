@@ -1,5 +1,6 @@
 import { db } from '../db';
-import type { InventoryItem, RestockEntry, ShoppingItem } from '../types';
+import type { InventoryItem, RestockEntry, ShoppingItem, PriceBasis } from '../types';
+import { isValidPriceBasis } from '../types';
 
 // ─── Backup format ───────────────────────────────────────────────────────────
 
@@ -143,6 +144,37 @@ function isNullableOrUndefinedString(v: unknown): v is string | null | undefined
   return v === undefined || v === null || typeof v === 'string';
 }
 
+/**
+ * Migrate an old comparison_unit value to a price_basis.
+ *
+ * Safe migrations (unit already represents the normalized target):
+ *   kg   → 'kg'
+ *   L    → 'L'
+ *   piece → 'piece'
+ *
+ * Unsafe migrations — the new model stores the price as-is, so we must NOT
+ * reinterpret old g/ml records to avoid changing their historical meaning:
+ *   g    → no price_basis (left undefined)
+ *   ml   → no price_basis (left undefined)
+ */
+function migrateLegacyComparisonUnit(
+  comparisonUnit: string | null | undefined,
+  existingPriceBasis: unknown,
+): PriceBasis | null | undefined {
+  // If the record already has a valid price_basis, keep it.
+  if (isValidPriceBasis(existingPriceBasis)) return existingPriceBasis;
+  if (existingPriceBasis === null) return null;
+
+  // Attempt migration from old comparison_unit.
+  if (!comparisonUnit) return undefined;
+  const u = comparisonUnit.trim().toLowerCase();
+  if (u === 'kg') return 'kg';
+  if (u === 'l') return 'L';
+  if (u === 'piece' || u === 'pieces') return 'piece';
+  // g, ml and any unknown unit: leave undefined (no basis assigned).
+  return undefined;
+}
+
 function validateInventoryItem(item: unknown, index: number): InventoryItem {
   if (typeof item !== 'object' || item === null) {
     throw new Error(`inventory[${index}] is not an object`);
@@ -167,11 +199,23 @@ function validateInventoryItem(item: unknown, index: number): InventoryItem {
   if (typeof it.is_on_manual_list !== 'boolean') throw new Error(`inventory[${index}].is_on_manual_list must be a boolean`);
   if (!isNullableString(it.opened_at)) throw new Error(`inventory[${index}].opened_at must be string|null`);
   if (!isBooleanOrUndefined(it.restock_enabled)) throw new Error(`inventory[${index}].restock_enabled must be a boolean or undefined`);
+  // price_basis: accept new field if present and valid, otherwise try to migrate from legacy comparison_unit.
+  if (it.price_basis !== undefined && it.price_basis !== null && !isValidPriceBasis(it.price_basis)) {
+    throw new Error(`inventory[${index}].price_basis must be "kg", "L", "piece", "package", or null/undefined`);
+  }
+  // Accept legacy fields for backward compatibility (old backups may have them).
   if (!isNullableOrUndefinedNumber(it.comparison_quantity)) throw new Error(`inventory[${index}].comparison_quantity must be number|null|undefined`);
   if (!isNullableOrUndefinedString(it.comparison_unit)) throw new Error(`inventory[${index}].comparison_unit must be string|null|undefined`);
   if (!isString(it.created_at)) throw new Error(`inventory[${index}].created_at must be a string`);
 
-  return it as unknown as InventoryItem;
+  // Build the validated record and apply migration if needed.
+  const record = it as unknown as InventoryItem;
+  const migratedBasis = migrateLegacyComparisonUnit(record.comparison_unit, record.price_basis);
+  if (migratedBasis !== undefined) {
+    record.price_basis = migratedBasis;
+  }
+
+  return record;
 }
 
 function validateRestockEntry(item: unknown, index: number): RestockEntry {
@@ -195,10 +239,22 @@ function validateRestockEntry(item: unknown, index: number): RestockEntry {
   }
   if (!isNullableString(it.store)) throw new Error(`restock_history[${index}].store must be string|null`);
   if (!isNullableString(it.notes)) throw new Error(`restock_history[${index}].notes must be string|null`);
+  // price_basis: accept new field if present and valid.
+  if (it.price_basis !== undefined && it.price_basis !== null && !isValidPriceBasis(it.price_basis)) {
+    throw new Error(`restock_history[${index}].price_basis must be "kg", "L", "piece", "package", or null/undefined`);
+  }
+  // Accept legacy fields for backward compatibility.
   if (!isNullableOrUndefinedNumber(it.comparison_quantity)) throw new Error(`restock_history[${index}].comparison_quantity must be number|null|undefined`);
   if (!isNullableOrUndefinedString(it.comparison_unit)) throw new Error(`restock_history[${index}].comparison_unit must be string|null|undefined`);
 
-  return it as unknown as RestockEntry;
+  // Build the validated record and apply migration if needed.
+  const record = it as unknown as RestockEntry;
+  const migratedBasis = migrateLegacyComparisonUnit(record.comparison_unit, record.price_basis);
+  if (migratedBasis !== undefined) {
+    record.price_basis = migratedBasis;
+  }
+
+  return record;
 }
 
 function validateShoppingItem(item: unknown, index: number): ShoppingItem {
@@ -224,6 +280,12 @@ function validateShoppingItem(item: unknown, index: number): ShoppingItem {
  * Reads and validates a `File` object, returning a typed `BackupFile`.
  * Throws a descriptive error if the file is malformed, missing required
  * tables, or has an incompatible format/version.
+ *
+ * Backward compatibility:
+ *   - Backups without comparison fields → imported as-is
+ *   - Backups with comparison_quantity / comparison_unit → imported and
+ *     safely migrated: kg/L/piece → price_basis; g/ml → no price_basis
+ *   - Backups already using price_basis → imported as-is
  */
 export async function importBackup(file: File): Promise<BackupFile> {
   let raw: unknown;

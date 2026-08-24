@@ -1,5 +1,5 @@
 import { db } from '../db';
-import type { TrackingMode } from '../types';
+import type { PriceBasis, TrackingMode } from '../types';
 
 /**
  * Insert a row into restock_history (the local Dexie table)
@@ -15,11 +15,10 @@ export async function savePriceEntry(opts: {
   trackingMode?: TrackingMode | null;
   packagesPurchased?: number | null;
   quantity?: number;
-  comparisonQuantity?: number | null;
-  comparisonUnit?: string | null;
+  priceBasis?: PriceBasis | null;
 }): Promise<void> {
-  const id = typeof crypto !== 'undefined' && crypto.randomUUID 
-    ? crypto.randomUUID() 
+  const id = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
     : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
         const r = (Math.random() * 16) | 0;
         const v = c === 'x' ? r : (r & 0x3) | 0x8;
@@ -36,8 +35,7 @@ export async function savePriceEntry(opts: {
     restocked_at: opts.restockedAt,
     store: opts.store?.trim() || null,
     notes: opts.notes?.trim() || null,
-    comparison_quantity: opts.comparisonQuantity ?? null,
-    comparison_unit: opts.comparisonUnit?.trim() || null,
+    price_basis: opts.priceBasis ?? null,
   });
 }
 

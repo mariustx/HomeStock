@@ -1,15 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, AlertTriangle } from 'lucide-react';
-import type { InventoryItem, ProductInput, TrackingMode } from './types';
+import type { InventoryItem, ProductInput, TrackingMode, PriceBasis } from './types';
 import {
   timestamptzToDateInput,
   dateInputToTimestamptz,
   STOCK_UNIT_SUGGESTIONS,
   PACKAGE_SUGGESTIONS,
   SPECIFICATION_SUGGESTIONS,
-  COMPARISON_UNITS,
-  computeComparablePrice,
-  formatComparable,
+  PRICE_BASIS_OPTIONS,
+  formatPriceWithBasis,
 } from './types';
 import { PriceInput, DateInput, StoreInput } from './components/PurchaseFields';
 import {
@@ -44,8 +43,7 @@ interface ProductFormState {
   notes: string;
   openedAt: string;
   restock_enabled: boolean;
-  comparison_quantity: string;
-  comparison_unit: string;
+  price_basis: PriceBasis | '';
   purchase: PurchaseState;
 }
 
@@ -63,8 +61,7 @@ const DEFAULTS: ProductFormState = {
   notes: '',
   openedAt: '',
   restock_enabled: true,
-  comparison_quantity: '',
-  comparison_unit: '',
+  price_basis: '',
   purchase: { price: '', date: todayISO(), store: '' },
 };
 
@@ -147,8 +144,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
           notes: itemToEdit.notes ?? '',
           openedAt: timestamptzToDateInput(itemToEdit.opened_at),
           restock_enabled: itemToEdit.restock_enabled !== false,
-          comparison_quantity: itemToEdit.comparison_quantity != null ? String(itemToEdit.comparison_quantity) : '',
-          comparison_unit: itemToEdit.comparison_unit ?? '',
+          price_basis: (itemToEdit.price_basis as PriceBasis | undefined) ?? '',
           purchase: { price: '', date: todayISO(), store: '' },
         };
       } else {
@@ -199,11 +195,8 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
           next.tracking_mode = match.tracking_mode ?? 'packages';
           next.purchase_package = match.purchase_package ?? '';
           next.units_per_package = String(match.units_per_package ?? 1);
-          if (match.comparison_unit) {
-            next.comparison_unit = match.comparison_unit;
-          }
-          if (match.comparison_quantity != null) {
-            next.comparison_quantity = String(match.comparison_quantity);
+          if (match.price_basis) {
+            next.price_basis = match.price_basis;
           }
         }
       }
@@ -262,19 +255,17 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
     if (!isPurchaseEmpty(form.purchase)) n++;
     if (form.openedAt.trim() !== '') n++;
     if (!form.restock_enabled) n++;
-    if (form.comparison_quantity.trim() !== '' || form.comparison_unit.trim() !== '') n++;
+    if (form.price_basis !== '') n++;
     return n;
   })();
 
   const parsedPrice = form.purchase.price.trim() ? parseFloat(form.purchase.price) : null;
-  const parsedCompQty = form.comparison_quantity.trim() ? parseFloat(form.comparison_quantity) : null;
-  const comparablePreview = useMemo(() => {
-    if (parsedPrice && parsedCompQty && form.comparison_unit) {
-      const cp = computeComparablePrice(parsedPrice, parsedCompQty, form.comparison_unit);
-      return cp ? formatComparable(cp.price, cp.unitLabel) : null;
+  const pricePreview = useMemo(() => {
+    if (parsedPrice != null && !Number.isNaN(parsedPrice) && parsedPrice > 0) {
+      return formatPriceWithBasis(parsedPrice, form.price_basis || null);
     }
     return null;
-  }, [parsedPrice, parsedCompQty, form.comparison_unit]);
+  }, [parsedPrice, form.price_basis]);
 
   const attemptClose = () => {
     if (submitting) return;
@@ -305,8 +296,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
       return;
     }
     const parsed = parsePurchase(form.purchase);
-    const compQty = form.comparison_quantity.trim() ? parseFloat(form.comparison_quantity) : null;
-    const validCompQty = compQty != null && !Number.isNaN(compQty) && compQty > 0 ? compQty : null;
 
     setSubmitting(true);
     setErr(null);
@@ -325,8 +314,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
         notes: form.notes || null,
         openedAt: dateInputToTimestamptz(form.openedAt),
         restock_enabled: form.restock_enabled,
-        comparison_quantity: validCompQty,
-        comparison_unit: form.comparison_unit.trim() || null,
+        price_basis: form.price_basis || null,
         price: parsed.price,
         purchaseDate: parsed.date,
         store: parsed.store,
@@ -437,11 +425,11 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                 onChange={(v) => setP({ price: v })}
                 id="product-price"
               />
-              {comparablePreview ? (
+              {pricePreview ? (
                 <div className="flex items-center gap-1.5 -mt-1 text-xs text-emerald-400">
-                  <span className="text-neutral-500">Comparable price:</span>
+                  <span className="text-neutral-500">Price:</span>
                   <span className="font-semibold tabular-nums bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full">
-                    {comparablePreview}
+                    {pricePreview}
                   </span>
                 </div>
               ) : (
@@ -501,49 +489,35 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                     suggestions={storeSuggestions}
                   />
 
-                  {/* Price comparison */}
+                  {/* Price basis */}
                   <div className="rounded-2xl bg-neutral-800/40 border border-neutral-800 p-3.5 space-y-3">
                     <div className="flex items-center justify-between">
                       <span className="text-xs font-semibold text-neutral-300 uppercase tracking-wide">
-                        Price comparison <span className="text-neutral-500 font-normal lowercase">(optional)</span>
+                        Price basis <span className="text-neutral-500 font-normal lowercase">(optional)</span>
                       </span>
-                      {comparablePreview && (
+                      {pricePreview && (
                         <span className="text-xs font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full tabular-nums">
-                          {comparablePreview}
+                          {pricePreview}
                         </span>
                       )}
                     </div>
                     <p className="text-[11px] text-neutral-500 -mt-1">
-                      For comparing weights, volumes, or piece prices (e.g. 1.836 kg, 500 g, 1 L, 330 ml). Stock is still tracked by whole packages/units.
+                      Select what unit the entered price is per. Stock is still tracked by whole packages/units.
                     </p>
-                    <div className="grid grid-cols-2 gap-3">
-                      <Field label="Quantity" hint="(optional)">
-                        <input
-                          type="number"
-                          inputMode="decimal"
-                          step="any"
-                          min={0}
-                          value={form.comparison_quantity}
-                          onChange={(e) => setForm({ ...form, comparison_quantity: e.target.value })}
-                          placeholder="e.g. 1.836"
-                          className="input"
-                        />
-                      </Field>
-                      <Field label="Unit" hint="(optional)">
-                        <select
-                          value={form.comparison_unit}
-                          onChange={(e) => setForm({ ...form, comparison_unit: e.target.value })}
-                          className="input"
-                        >
-                          <option value="">None (no unit price)</option>
-                          {COMPARISON_UNITS.map((u) => (
-                            <option key={u} value={u}>
-                              {u} {u === 'piece' ? '(per piece)' : u === 'kg' || u === 'g' ? '(per kg)' : '(per L)'}
-                            </option>
-                          ))}
-                        </select>
-                      </Field>
-                    </div>
+                    <Field label="Price basis">
+                      <select
+                        value={form.price_basis}
+                        onChange={(e) => setForm({ ...form, price_basis: e.target.value as PriceBasis | '' })}
+                        className="input"
+                      >
+                        <option value="">None</option>
+                        {PRICE_BASIS_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                    </Field>
                   </div>
 
                   <Field label="Variant">
@@ -613,7 +587,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
 
                   <Field
                     label="Units per package"
-                    hint={form.tracking_mode === 'packages' ? 'For comparable price' : undefined}
                   >
                     <StepperInput
                       value={form.units_per_package}

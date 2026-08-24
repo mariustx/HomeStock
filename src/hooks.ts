@@ -8,6 +8,7 @@ import type {
   RestockInput,
   ShoppingItemInput,
   TrackingMode,
+  PriceBasis,
 } from './types';
 import { restockAddAmount } from './types';
 
@@ -31,8 +32,7 @@ async function insertPriceEntry(opts: {
   trackingMode?: TrackingMode | null;
   packagesPurchased?: number | null;
   quantity?: number;
-  comparisonQuantity?: number | null;
-  comparisonUnit?: string | null;
+  priceBasis?: PriceBasis | null;
 }): Promise<void> {
   await db.restock_history.add({
     id: generateId(),
@@ -44,8 +44,7 @@ async function insertPriceEntry(opts: {
     restocked_at: opts.restockedAt,
     store: opts.store?.trim() || null,
     notes: opts.notes?.trim() || null,
-    comparison_quantity: opts.comparisonQuantity ?? null,
-    comparison_unit: opts.comparisonUnit?.trim() || null,
+    price_basis: opts.priceBasis ?? null,
   });
 }
 
@@ -90,8 +89,7 @@ export function useInventory() {
       is_on_manual_list: false,
       opened_at: input.openedAt ?? null,
       restock_enabled: input.restock_enabled !== false,
-      comparison_quantity: input.comparison_quantity ?? null,
-      comparison_unit: input.comparison_unit?.trim() || null,
+      price_basis: input.price_basis ?? null,
       created_at: now,
     };
     await db.inventory.add(newItem);
@@ -104,8 +102,7 @@ export function useInventory() {
         store: input.store ?? null,
         trackingMode: input.tracking_mode,
         quantity: 0,
-        comparisonQuantity: input.comparison_quantity ?? null,
-        comparisonUnit: input.comparison_unit?.trim() || null,
+        priceBasis: input.price_basis ?? null,
       });
     }
     return newItem;
@@ -130,8 +127,7 @@ export function useInventory() {
       notes: input.notes?.trim() || null,
       opened_at: input.openedAt !== undefined ? input.openedAt : (existing.opened_at ?? null),
       restock_enabled: input.restock_enabled !== undefined ? input.restock_enabled : (existing.restock_enabled !== false),
-      comparison_quantity: input.comparison_quantity !== undefined ? input.comparison_quantity : (existing.comparison_quantity ?? null),
-      comparison_unit: input.comparison_unit !== undefined ? (input.comparison_unit?.trim() || null) : (existing.comparison_unit ?? null),
+      price_basis: input.price_basis !== undefined ? (input.price_basis ?? null) : (existing.price_basis ?? null),
     };
     await db.inventory.put(updated);
     setItems((prev) => prev.map((it) => (it.id === id ? updated : it)).sort(sortAlpha));
@@ -143,8 +139,7 @@ export function useInventory() {
         store: input.store ?? null,
         trackingMode: input.tracking_mode,
         quantity: 0,
-        comparisonQuantity: input.comparison_quantity ?? existing.comparison_quantity ?? null,
-        comparisonUnit: input.comparison_unit?.trim() || existing.comparison_unit || null,
+        priceBasis: input.price_basis ?? existing.price_basis ?? null,
       });
     }
   }, []);
@@ -197,8 +192,7 @@ export function useInventory() {
           restocked_at: input.restockedAt,
           store: input.store?.trim() || null,
           notes: input.notes?.trim() || null,
-          comparison_quantity: input.comparison_quantity ?? null,
-          comparison_unit: input.comparison_unit?.trim() || null,
+          price_basis: input.price_basis ?? null,
         });
         return newCount;
       });

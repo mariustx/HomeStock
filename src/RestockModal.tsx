@@ -4,11 +4,10 @@ import {
   pluralize,
   restockAddAmount,
   TRACKING_MODE_LABELS,
-  COMPARISON_UNITS,
-  computeComparablePrice,
-  formatComparable,
+  PRICE_BASIS_OPTIONS,
+  formatPriceWithBasis,
 } from './types';
-import type { InventoryItem, RestockInput } from './types';
+import type { InventoryItem, RestockInput, PriceBasis } from './types';
 import { PriceInput, DateInput, StoreInput, Field } from './components/PurchaseFields';
 import { emptyPurchaseState, parsePurchase, validatePurchase, todayISO, type PurchaseState } from './lib/purchase';
 
@@ -24,8 +23,7 @@ export function RestockModal({ item, onClose, onConfirm }: RestockModalProps) {
   const [overrideUnits, setOverrideUnits] = useState('');
   const [notes, setNotes] = useState('');
   const [purchase, setPurchase] = useState<PurchaseState>(emptyPurchaseState(todayISO()));
-  const [comparisonQuantity, setComparisonQuantity] = useState('');
-  const [comparisonUnit, setComparisonUnit] = useState('');
+  const [priceBasis, setPriceBasis] = useState<PriceBasis | ''>('');
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -46,24 +44,22 @@ export function RestockModal({ item, onClose, onConfirm }: RestockModalProps) {
     setOverrideOn(false);
     setOverrideUnits('');
     setPurchase(emptyPurchaseState(todayISO()));
-    setComparisonQuantity(item.comparison_quantity != null ? String(item.comparison_quantity) : '');
-    setComparisonUnit(item.comparison_unit ?? '');
+    // Pre-fill basis from the item's current price_basis
+    setPriceBasis((item.price_basis as PriceBasis | undefined) ?? '');
     setNotes('');
     setErr(null);
     setSubmitting(false);
-  }, [item.id, item.comparison_quantity, item.comparison_unit]);
+  }, [item.id, item.price_basis]);
 
   const setP = (patch: Partial<PurchaseState>) => setPurchase((prev) => ({ ...prev, ...patch }));
 
   const parsedPrice = purchase.price.trim() ? parseFloat(purchase.price) : null;
-  const parsedCompQty = comparisonQuantity.trim() ? parseFloat(comparisonQuantity) : null;
-  const comparablePreview = useMemo(() => {
-    if (parsedPrice && parsedCompQty && comparisonUnit) {
-      const cp = computeComparablePrice(parsedPrice, parsedCompQty, comparisonUnit);
-      return cp ? formatComparable(cp.price, cp.unitLabel) : null;
+  const pricePreview = useMemo(() => {
+    if (parsedPrice != null && !Number.isNaN(parsedPrice) && parsedPrice > 0) {
+      return formatPriceWithBasis(parsedPrice, priceBasis || null);
     }
     return null;
-  }, [parsedPrice, parsedCompQty, comparisonUnit]);
+  }, [parsedPrice, priceBasis]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -84,8 +80,6 @@ export function RestockModal({ item, onClose, onConfirm }: RestockModalProps) {
       return;
     }
     const parsed = parsePurchase(purchase);
-    const compQty = comparisonQuantity.trim() ? parseFloat(comparisonQuantity) : null;
-    const validCompQty = compQty != null && !Number.isNaN(compQty) && compQty > 0 ? compQty : null;
 
     setSubmitting(true);
     setErr(null);
@@ -99,8 +93,7 @@ export function RestockModal({ item, onClose, onConfirm }: RestockModalProps) {
         restockedAt: parsed.date,
         store: parsed.store,
         notes: notes || null,
-        comparison_quantity: validCompQty,
-        comparison_unit: comparisonUnit.trim() || null,
+        price_basis: priceBasis || null,
       });
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to record restock.');
@@ -215,46 +208,35 @@ export function RestockModal({ item, onClose, onConfirm }: RestockModalProps) {
           </div>
           <StoreInput value={purchase.store} onChange={(v) => setP({ store: v })} id="restock-store" />
 
-          {/* Price comparison */}
+          {/* Price basis */}
           <div className="rounded-2xl bg-neutral-800/40 border border-neutral-800 p-3.5 space-y-3">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold text-neutral-300 uppercase tracking-wide">
-                Price comparison <span className="text-neutral-500 font-normal lowercase">(optional)</span>
+                Price basis <span className="text-neutral-500 font-normal lowercase">(optional)</span>
               </span>
-              {comparablePreview && (
+              {pricePreview && (
                 <span className="text-xs font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full tabular-nums">
-                  {comparablePreview}
+                  {pricePreview}
                 </span>
               )}
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="Quantity" hint="(optional)">
-                <input
-                  type="number"
-                  inputMode="decimal"
-                  step="any"
-                  min={0}
-                  value={comparisonQuantity}
-                  onChange={(e) => setComparisonQuantity(e.target.value)}
-                  placeholder="e.g. 1.836"
-                  className="input"
-                />
-              </Field>
-              <Field label="Unit" hint="(optional)">
-                <select
-                  value={comparisonUnit}
-                  onChange={(e) => setComparisonUnit(e.target.value)}
-                  className="input"
-                >
-                  <option value="">None (no unit price)</option>
-                  {COMPARISON_UNITS.map((u) => (
-                    <option key={u} value={u}>
-                      {u} {u === 'piece' ? '(per piece)' : u === 'kg' || u === 'g' ? '(per kg)' : '(per L)'}
-                    </option>
-                  ))}
-                </select>
-              </Field>
-            </div>
+            <p className="text-[11px] text-neutral-500 -mt-1">
+              Select what unit the entered price is per. Stock is not affected.
+            </p>
+            <Field label="Price basis">
+              <select
+                value={priceBasis}
+                onChange={(e) => setPriceBasis(e.target.value as PriceBasis | '')}
+                className="input"
+              >
+                <option value="">None</option>
+                {PRICE_BASIS_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </Field>
           </div>
 
           <label className="block">
