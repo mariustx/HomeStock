@@ -15,6 +15,8 @@ export async function savePriceEntry(opts: {
   trackingMode?: TrackingMode | null;
   packagesPurchased?: number | null;
   quantity?: number;
+  comparisonQuantity?: number | null;
+  comparisonUnit?: string | null;
 }): Promise<void> {
   const id = typeof crypto !== 'undefined' && crypto.randomUUID 
     ? crypto.randomUUID() 
@@ -34,6 +36,8 @@ export async function savePriceEntry(opts: {
     restocked_at: opts.restockedAt,
     store: opts.store?.trim() || null,
     notes: opts.notes?.trim() || null,
+    comparison_quantity: opts.comparisonQuantity ?? null,
+    comparison_unit: opts.comparisonUnit?.trim() || null,
   });
 }
 

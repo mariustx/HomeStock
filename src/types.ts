@@ -1,4 +1,5 @@
 export type TrackingMode = 'packages' | 'units';
+export type ComparisonUnit = 'kg' | 'g' | 'L' | 'ml' | 'piece';
 
 export interface InventoryItem {
   id: string;
@@ -17,6 +18,8 @@ export interface InventoryItem {
   is_on_manual_list: boolean;
   opened_at: string | null;
   restock_enabled?: boolean;
+  comparison_quantity?: number | null;
+  comparison_unit?: string | null;
   created_at: string;
 }
 
@@ -30,6 +33,8 @@ export interface RestockEntry {
   tracking_mode: TrackingMode | null;
   store: string | null;
   notes: string | null;
+  comparison_quantity?: number | null;
+  comparison_unit?: string | null;
 }
 
 export interface ShoppingItem {
@@ -56,6 +61,8 @@ export type ProductInput = {
   notes?: string | null;
   openedAt?: string | null;
   restock_enabled?: boolean;
+  comparison_quantity?: number | null;
+  comparison_unit?: string | null;
   /** Optional price spotted at a store — saved to restock_history without changing stock. */
   price?: number | null;
   purchaseDate?: string | null;
@@ -71,6 +78,8 @@ export type RestockInput = {
   restockedAt: string;
   store?: string | null;
   notes?: string | null;
+  comparison_quantity?: number | null;
+  comparison_unit?: string | null;
 };
 
 export type ShoppingItemInput = {
@@ -85,6 +94,7 @@ export type TabKey = 'inventory' | 'shopping' | 'insights';
 export const STOCK_UNIT_SUGGESTIONS = ['piece', 'roll', 'bottle', 'tube', 'can', 'jar', 'tablet', 'capsule', 'pair', 'box', 'bag'] as const;
 export const PACKAGE_SUGGESTIONS = ['Piece', 'Pack', 'Box', 'Tray', 'Carton', 'Bag', 'Crate', 'Bundle', 'Set'] as const;
 export const SPECIFICATION_SUGGESTIONS = ['400 mL', '700 mL', '1 L', '1 kg', '400 g', '3-ply', 'AA', 'AAA', 'E27', 'Sensitive'] as const;
+export const COMPARISON_UNITS: readonly ComparisonUnit[] = ['kg', 'g', 'L', 'ml', 'piece'] as const;
 
 export const TRACKING_MODE_LABELS: Record<TrackingMode, string> = {
   packages: 'Unopened packages',
@@ -144,72 +154,65 @@ export function restockAddAmount(
 }
 
 /**
- * Parse a specification string like "400 g", "700 mL", "1 L", "90 pieces"
- * into a numeric amount and unit for comparable-price calculation.
- * Returns null when the spec can't be parsed.
- */
-export interface ParsedSpec {
-  amount: number;
-  unit: string;
-}
-
-export function parseSpec(spec: string | null | undefined): ParsedSpec | null {
-  if (!spec || !spec.trim()) return null;
-  const match = spec.trim().match(/^([\d.]+)\s*([a-zA-Z]+)$/);
-  if (!match) return null;
-  const amount = parseFloat(match[1]);
-  const unit = match[2].toLowerCase();
-  if (Number.isNaN(amount) || amount <= 0) return null;
-  return { amount, unit };
-}
-
-/**
- * Compute a comparable unit price from a purchase price and a specification.
- * Normalises weights (g→kg) and volumes (mL→L) so prices are comparable
- * across different package sizes.
+ * Compute a comparable unit price from price, quantity, and unit.
+ * Normalises weights (g→kg) and volumes (ml→L) and handles per-piece prices.
  *
- * Examples:
- *   price=8, spec="400 g"  → 20 RON/kg
- *   price=24, spec="1 L"   → 2.40 RON/100mL  (returned as 24 RON/L, caller formats)
- *   price=18, spec="90 pieces" → 0.20 RON/piece
+ * Supported units:
+ *   - kg → RON/kg
+ *   - g → RON/kg
+ *   - L → RON/L
+ *   - ml → RON/L
+ *   - piece → RON/piece
  *
- * Returns { price, unitLabel } or null.
+ * Returns { price, unitLabel } or null if invalid/missing.
  */
-export function comparablePrice(
-  price: number,
-  spec: string | null | undefined,
+export function computeComparablePrice(
+  price: number | null | undefined,
+  quantity: number | null | undefined,
+  unit: string | null | undefined,
 ): { price: number; unitLabel: string } | null {
-  const parsed = parseSpec(spec);
-  if (!parsed) return null;
-  const { amount, unit } = parsed;
+  if (price == null || Number.isNaN(price) || price <= 0) return null;
+  if (quantity == null || Number.isNaN(quantity) || quantity <= 0) return null;
+  if (!unit || typeof unit !== 'string') return null;
 
-  // Weight: normalise to per-kg (or per-100g for small amounts)
-  if (unit === 'g' || unit === 'gr' || unit === 'grams') {
-    const perKg = (price / amount) * 1000;
-    return { price: perKg, unitLabel: 'RON/kg' };
+  const u = unit.trim().toLowerCase();
+
+  // Weight: normalise to per-kg
+  if (u === 'kg' || u === 'kilos' || u === 'kilogram' || u === 'kilograms') {
+    return { price: price / quantity, unitLabel: 'RON/kg' };
   }
-  if (unit === 'kg' || unit === 'kilos' || unit === 'kilogram') {
-    return { price: price / amount, unitLabel: 'RON/kg' };
+  if (u === 'g' || u === 'gr' || u === 'grams' || u === 'gram') {
+    return { price: (price / quantity) * 1000, unitLabel: 'RON/kg' };
   }
 
   // Volume: normalise to per-litre
-  if (unit === 'ml' || unit === 'milliliter' || unit === 'millilitre') {
-    const perL = (price / amount) * 1000;
-    return { price: perL, unitLabel: 'RON/L' };
+  if (u === 'l' || u === 'liter' || u === 'litre' || u === 'liters' || u === 'litres') {
+    return { price: price / quantity, unitLabel: 'RON/L' };
   }
-  if (unit === 'l' || unit === 'liter' || unit === 'litre') {
-    return { price: price / amount, unitLabel: 'RON/L' };
+  if (u === 'ml' || u === 'milliliter' || u === 'millilitre' || u === 'milliliters' || u === 'millilitres') {
+    return { price: (price / quantity) * 1000, unitLabel: 'RON/L' };
   }
 
-  // Countable: pieces, capsules, tablets, rolls, etc.
-  return { price: price / amount, unitLabel: `RON/${unit}` };
+  // Countable: individual pieces
+  if (u === 'piece' || u === 'pieces' || u === 'buc' || u === 'bucati' || u === 'bucată') {
+    return { price: price / quantity, unitLabel: 'RON/piece' };
+  }
+
+  return null;
 }
 
 /**
  * Format a comparable price for display.
+ * e.g.
+ *   7.33 RON / 1.836 kg → 3.99 RON/kg
+ *   2.07 RON / 0.518 kg → 4.00 RON/kg
+ *   5 RON / 500 g → 10 RON/kg
+ *   6 RON / 750 ml → 8 RON/L
  */
 export function formatComparable(price: number, unitLabel: string): string {
-  if (price >= 100) return `${price.toFixed(0)} ${unitLabel}`;
-  if (price >= 10) return `${price.toFixed(1)} ${unitLabel}`;
+  if (Number.isNaN(price) || !Number.isFinite(price) || price <= 0) return '';
+  if (Number.isInteger(price)) {
+    return `${price} ${unitLabel}`;
+  }
   return `${price.toFixed(2)} ${unitLabel}`;
 }

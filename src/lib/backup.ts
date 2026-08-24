@@ -135,6 +135,14 @@ function isNullableNumber(v: unknown): v is number | null {
   return v === null || typeof v === 'number';
 }
 
+function isNullableOrUndefinedNumber(v: unknown): v is number | null | undefined {
+  return v === undefined || v === null || typeof v === 'number';
+}
+
+function isNullableOrUndefinedString(v: unknown): v is string | null | undefined {
+  return v === undefined || v === null || typeof v === 'string';
+}
+
 function validateInventoryItem(item: unknown, index: number): InventoryItem {
   if (typeof item !== 'object' || item === null) {
     throw new Error(`inventory[${index}] is not an object`);
@@ -159,6 +167,8 @@ function validateInventoryItem(item: unknown, index: number): InventoryItem {
   if (typeof it.is_on_manual_list !== 'boolean') throw new Error(`inventory[${index}].is_on_manual_list must be a boolean`);
   if (!isNullableString(it.opened_at)) throw new Error(`inventory[${index}].opened_at must be string|null`);
   if (!isBooleanOrUndefined(it.restock_enabled)) throw new Error(`inventory[${index}].restock_enabled must be a boolean or undefined`);
+  if (!isNullableOrUndefinedNumber(it.comparison_quantity)) throw new Error(`inventory[${index}].comparison_quantity must be number|null|undefined`);
+  if (!isNullableOrUndefinedString(it.comparison_unit)) throw new Error(`inventory[${index}].comparison_unit must be string|null|undefined`);
   if (!isString(it.created_at)) throw new Error(`inventory[${index}].created_at must be a string`);
 
   return it as unknown as InventoryItem;
@@ -185,6 +195,8 @@ function validateRestockEntry(item: unknown, index: number): RestockEntry {
   }
   if (!isNullableString(it.store)) throw new Error(`restock_history[${index}].store must be string|null`);
   if (!isNullableString(it.notes)) throw new Error(`restock_history[${index}].notes must be string|null`);
+  if (!isNullableOrUndefinedNumber(it.comparison_quantity)) throw new Error(`restock_history[${index}].comparison_quantity must be number|null|undefined`);
+  if (!isNullableOrUndefinedString(it.comparison_unit)) throw new Error(`restock_history[${index}].comparison_unit must be string|null|undefined`);
 
   return it as unknown as RestockEntry;
 }

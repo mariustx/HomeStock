@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Dot } from 'recharts';
 import { TrendingUp, LineChart as LineIcon } from 'lucide-react';
-import { pluralize, comparablePrice, formatComparable, type InventoryItem, type RestockEntry } from './types';
+import { pluralize, computeComparablePrice, formatComparable, type InventoryItem, type RestockEntry } from './types';
 import { useRestockHistory } from './hooks';
 
 interface InsightsViewProps {
@@ -14,6 +14,8 @@ interface ChartPoint {
   price: number;
   qty: number;
   comparable: string | null;
+  comparablePriceNum: number | null;
+  comparableUnitLabel: string | null;
 }
 
 export function InsightsView({ items }: InsightsViewProps) {
@@ -23,14 +25,17 @@ export function InsightsView({ items }: InsightsViewProps) {
   const { history, loading } = useRestockHistory(effectiveId || null);
 
   const selectedItem = items.find((it) => it.id === effectiveId);
-  const itemSpec = selectedItem?.specification ?? null;
 
   const chartData = useMemo<ChartPoint[]>(
     () =>
       history
-        .filter((h) => h.price !== null)
+        .filter((h) => h.price !== null && !Number.isNaN(Number(h.price)) && Number(h.price) > 0)
         .map((h) => {
-          const cp = comparablePrice(Number(h.price), itemSpec);
+          const priceNum = Number(h.price);
+          const compQty = h.comparison_quantity != null ? h.comparison_quantity : (selectedItem?.comparison_quantity ?? null);
+          const compUnit = h.comparison_unit != null ? h.comparison_unit : (selectedItem?.comparison_unit ?? null);
+          const cp = computeComparablePrice(priceNum, compQty, compUnit);
+
           return {
             date: new Date(h.restocked_at).toLocaleDateString(undefined, {
               month: 'short',
@@ -38,13 +43,15 @@ export function InsightsView({ items }: InsightsViewProps) {
               year: '2-digit',
             }),
             ts: new Date(h.restocked_at).getTime(),
-            price: Number(h.price),
+            price: priceNum,
             qty: h.quantity,
             comparable: cp ? formatComparable(cp.price, cp.unitLabel) : null,
+            comparablePriceNum: cp ? cp.price : null,
+            comparableUnitLabel: cp ? cp.unitLabel : null,
           };
         })
         .sort((a, b) => a.ts - b.ts),
-    [history, itemSpec],
+    [history, selectedItem?.comparison_quantity, selectedItem?.comparison_unit],
   );
 
   const stats = useMemo(() => {
@@ -60,12 +67,10 @@ export function InsightsView({ items }: InsightsViewProps) {
   }, [chartData]);
 
   const latestComparable = useMemo(() => {
-    if (stats && itemSpec) {
-      const cp = comparablePrice(stats.latest, itemSpec);
-      return cp ? formatComparable(cp.price, cp.unitLabel) : null;
-    }
-    return null;
-  }, [stats, itemSpec]);
+    const validCompPoints = chartData.filter((d) => d.comparable !== null);
+    if (validCompPoints.length === 0) return null;
+    return validCompPoints[validCompPoints.length - 1].comparable;
+  }, [chartData]);
 
   return (
     <div className="px-4 pb-4 space-y-4">
@@ -123,7 +128,7 @@ export function InsightsView({ items }: InsightsViewProps) {
           {latestComparable && (
             <div className="bg-emerald-950/30 border border-emerald-900/50 rounded-2xl p-3 flex items-center justify-between">
               <span className="text-xs text-neutral-400">
-                Comparable price{itemSpec ? ` (${itemSpec})` : ''}
+                Comparable price
               </span>
               <span className="text-sm font-semibold text-emerald-400 tabular-nums">{latestComparable}</span>
             </div>
