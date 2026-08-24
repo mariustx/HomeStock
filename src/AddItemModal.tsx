@@ -177,8 +177,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
     };
   }, [open]);
 
-  if (!open) return null;
-
   const setP = (patch: Partial<PurchaseState>) =>
     setForm((prev) => ({ ...prev, purchase: { ...prev.purchase, ...patch } }));
 
@@ -260,12 +258,10 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
   })();
 
   const parsedPrice = form.purchase.price.trim() ? parseFloat(form.purchase.price) : null;
-  const pricePreview = useMemo(() => {
-    if (parsedPrice != null && !Number.isNaN(parsedPrice) && parsedPrice > 0) {
-      return formatPriceWithBasis(parsedPrice, form.price_basis || null);
-    }
-    return null;
-  }, [parsedPrice, form.price_basis]);
+  const pricePreview =
+    parsedPrice != null && !Number.isNaN(parsedPrice) && parsedPrice > 0
+      ? formatPriceWithBasis(parsedPrice, form.price_basis || null)
+      : null;
 
   const attemptClose = () => {
     if (submitting) return;
@@ -325,6 +321,8 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
       setSubmitting(false);
     }
   };
+
+  if (!open) return null;
 
   return (
     <>
