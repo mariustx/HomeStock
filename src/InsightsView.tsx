@@ -1,7 +1,17 @@
 import { useMemo, useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Dot } from 'recharts';
-import { TrendingUp, LineChart as LineIcon } from 'lucide-react';
-import { pluralize, formatPriceWithBasis, type PriceBasis, type InventoryItem, type RestockEntry } from './types';
+import {
+  TrendingUp,
+  LineChart as LineIcon,
+  Search,
+  X,
+  ArrowDown,
+  Clock,
+  Calendar,
+  Check,
+  Package,
+} from 'lucide-react';
+import { pluralize, formatPriceWithBasis, type PriceBasis, type InventoryItem } from './types';
 import { useRestockHistory } from './hooks';
 
 interface InsightsViewProps {
@@ -9,205 +19,390 @@ interface InsightsViewProps {
 }
 
 interface ChartPoint {
+  id: string;
   date: string;
+  chartDate: string;
+  dateFormatted: string;
   ts: number;
   price: number;
   qty: number;
+  store: string | null;
+  notes: string | null;
   /** Formatted price display, e.g. "3.99 RON/kg" or "3.50 RON" */
   priceDisplay: string;
   /** The price_basis for this specific entry, or null if none recorded */
   priceBasis: PriceBasis | null;
+  isLowest: boolean;
+  isLatest: boolean;
 }
 
 export function InsightsView({ items }: InsightsViewProps) {
+  const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedId, setSelectedId] = useState<string>('');
+  const [isDropdownOpen, setIsDropdownOpen] = useState<boolean>(false);
 
-  const effectiveId = selectedId || items[0]?.id || '';
+  // Filter items matching product name or brand (case-insensitive)
+  const trimmedQuery = searchQuery.trim().toLowerCase();
+  const matchingItems = useMemo(() => {
+    if (!trimmedQuery) return items;
+    return items.filter((it) => {
+      const productMatch = it.product.toLowerCase().includes(trimmedQuery);
+      const brandMatch = it.brand ? it.brand.toLowerCase().includes(trimmedQuery) : false;
+      return productMatch || brandMatch;
+    });
+  }, [items, trimmedQuery]);
+
+  // Determine the active item: either by selectedId or fallback to first matching/available item
+  const selectedItem = useMemo(() => {
+    if (selectedId) {
+      const found = items.find((it) => it.id === selectedId);
+      if (found) return found;
+    }
+    return matchingItems[0] || items[0] || null;
+  }, [items, selectedId, matchingItems]);
+
+  const effectiveId = selectedItem?.id || '';
   const { history, loading } = useRestockHistory(effectiveId || null);
 
-  const selectedItem = items.find((it) => it.id === effectiveId);
+  // Valid price points sorted chronologically (earliest to latest)
+  const validEntries = useMemo(() => {
+    return history
+      .filter((h) => h.price !== null && !Number.isNaN(Number(h.price)) && Number(h.price) > 0)
+      .map((h) => {
+        const priceNum = Number(h.price);
+        const basis = (h.price_basis as PriceBasis | undefined) ?? null;
+        const d = new Date(h.restocked_at);
+        return {
+          id: h.id,
+          date: h.restocked_at,
+          chartDate: d.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            year: '2-digit',
+          }),
+          dateFormatted: d.toLocaleDateString(undefined, {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+          }),
+          ts: d.getTime(),
+          price: priceNum,
+          qty: h.quantity,
+          store: h.store,
+          notes: h.notes,
+          priceDisplay: formatPriceWithBasis(priceNum, basis) || `${priceNum.toFixed(2)} RON`,
+          priceBasis: basis,
+        };
+      })
+      .sort((a, b) => a.ts - b.ts);
+  }, [history]);
 
-  const chartData = useMemo<ChartPoint[]>(
-    () =>
-      history
-        .filter((h) => h.price !== null && !Number.isNaN(Number(h.price)) && Number(h.price) > 0)
-        .map((h) => {
-          const priceNum = Number(h.price);
-          // Use only this entry's own price_basis — never fall back to the product's current basis.
-          // A historical entry without a basis remains a plain price.
-          const basis = (h.price_basis as PriceBasis | undefined) ?? null;
+  // Price statistics: Lowest, Latest, Average, and Lowest Date
+  const priceStats = useMemo(() => {
+    if (validEntries.length === 0) return null;
 
-          return {
-            date: new Date(h.restocked_at).toLocaleDateString(undefined, {
-              month: 'short',
-              day: 'numeric',
-              year: '2-digit',
-            }),
-            ts: new Date(h.restocked_at).getTime(),
-            price: priceNum,
-            qty: h.quantity,
-            priceDisplay: formatPriceWithBasis(priceNum, basis) || `${priceNum.toFixed(2)} RON`,
-            priceBasis: basis,
-          };
-        })
-        .sort((a, b) => a.ts - b.ts),
-    [history],
-  );
+    const prices = validEntries.map((e) => e.price);
+    const minPrice = Math.min(...prices);
+    const avgPrice = prices.reduce((s, p) => s + p, 0) / prices.length;
 
-  // Basic stats over ALL price entries regardless of basis
-  const stats = useMemo(() => {
-    if (chartData.length === 0) return null;
-    const prices = chartData.map((d) => d.price);
-    const avg = prices.reduce((s, p) => s + p, 0) / prices.length;
-    const min = Math.min(...prices);
-    const max = Math.max(...prices);
-    const latest = prices[prices.length - 1];
-    const first = prices[0];
-    const change = first > 0 ? ((latest - first) / first) * 100 : 0;
-    return { avg, min, max, latest, change };
-  }, [chartData]);
+    // Latest entry is the last item in chronological order
+    const latestEntry = validEntries[validEntries.length - 1];
 
-  // Per-basis stats: group by basis, only compare entries that share the same basis.
-  // Entries without a basis are excluded from per-basis statistics.
-  const basisStats = useMemo(() => {
-    const groups = new Map<PriceBasis, number[]>();
-    for (const point of chartData) {
-      if (!point.priceBasis) continue;
-      const existing = groups.get(point.priceBasis) ?? [];
-      existing.push(point.price);
-      groups.set(point.priceBasis, existing);
-    }
+    // Lowest entry (first chronological occurrence of lowest price)
+    const lowestEntry = validEntries.find((e) => e.price === minPrice) || validEntries[0];
 
-    const result: Array<{
-      basis: PriceBasis;
-      avg: number;
-      min: number;
-      max: number;
-      latest: number;
-      count: number;
-    }> = [];
+    return {
+      lowestPrice: minPrice,
+      lowestPriceDisplay: lowestEntry.priceDisplay,
+      lowestDate: lowestEntry.dateFormatted,
+      latestPrice: latestEntry.price,
+      latestPriceDisplay: latestEntry.priceDisplay,
+      avgPrice,
+      avgPriceDisplay: `${avgPrice.toFixed(2)} RON`,
+      count: validEntries.length,
+    };
+  }, [validEntries]);
 
-    for (const [basis, prices] of groups.entries()) {
-      if (prices.length === 0) continue;
-      const avg = prices.reduce((s, p) => s + p, 0) / prices.length;
-      result.push({
-        basis,
-        avg,
-        min: Math.min(...prices),
-        max: Math.max(...prices),
-        latest: prices[prices.length - 1],
-        count: prices.length,
-      });
-    }
-    return result;
-  }, [chartData]);
+  // Chronological history with lowest and latest flags
+  const chronologicalHistory = useMemo<ChartPoint[]>(() => {
+    if (validEntries.length === 0) return [];
+    const minPrice = Math.min(...validEntries.map((e) => e.price));
+    const latestId = validEntries[validEntries.length - 1]?.id;
 
-  const latestEntry = chartData.length > 0 ? chartData[chartData.length - 1] : null;
+    return validEntries.map((e) => ({
+      ...e,
+      isLowest: e.price === minPrice,
+      isLatest: e.id === latestId,
+    }));
+  }, [validEntries]);
+
+  const handleSelectItem = (id: string) => {
+    setSelectedId(id);
+    setIsDropdownOpen(false);
+  };
 
   return (
-    <div className="px-4 pb-4 space-y-4">
-      <div>
-        <label className="block text-xs font-medium text-neutral-400 mb-1.5">Select item</label>
-        <select
-          value={effectiveId}
-          onChange={(e) => setSelectedId(e.target.value)}
-          className="input"
-        >
-          {items.length === 0 && <option value="">No items yet</option>}
-          {items.map((it) => (
-            <option key={it.id} value={it.id}>
-              {it.product}
-              {it.brand ? ` · ${it.brand}` : ''}
-              {it.variant ? ` (${it.variant})` : ''}
-            </option>
-          ))}
-        </select>
+    <div className="px-4 pb-6 space-y-4">
+      {/* Searchable Item Selector */}
+      <div className="bg-neutral-900/90 border border-neutral-800 rounded-2xl p-3.5 shadow-sm space-y-3">
+        <label className="block text-xs font-semibold uppercase tracking-wider text-neutral-400">
+          Search & Select Item
+        </label>
+
+        {/* Search Bar */}
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-neutral-500 pointer-events-none" />
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => {
+              setSearchQuery(e.target.value);
+              setIsDropdownOpen(true);
+            }}
+            onFocus={() => setIsDropdownOpen(true)}
+            placeholder="Search product or brand…"
+            className="input pl-9 pr-9 text-sm"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => {
+                setSearchQuery('');
+              }}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 h-6 w-6 grid place-items-center text-neutral-500 hover:text-white rounded-md transition"
+              aria-label="Clear search"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
+        {/* Search Results / Matching Items List */}
+        {items.length === 0 ? (
+          <p className="text-xs text-neutral-500 py-1">No items in inventory yet.</p>
+        ) : trimmedQuery ? (
+          <div className="space-y-1.5">
+            <div className="flex items-center justify-between text-xs text-neutral-400 px-1">
+              <span>
+                {matchingItems.length}{' '}
+                {matchingItems.length === 1 ? 'matching item' : 'matching items'}
+              </span>
+            </div>
+            {matchingItems.length === 0 ? (
+              <div className="text-center py-6 bg-neutral-950/40 rounded-xl border border-neutral-800/80 px-4">
+                <Package className="h-6 w-6 mx-auto mb-2 text-neutral-600" />
+                <p className="text-sm text-neutral-400">
+                  No items match &ldquo;{searchQuery}&rdquo;
+                </p>
+                <p className="text-xs text-neutral-600 mt-0.5">Try searching by product name or brand</p>
+              </div>
+            ) : (
+              <div className="max-h-56 overflow-y-auto space-y-1.5 pr-0.5 custom-scrollbar">
+                {matchingItems.map((it) => {
+                  const isSelected = it.id === effectiveId;
+                  return (
+                    <button
+                      key={it.id}
+                      onClick={() => handleSelectItem(it.id)}
+                      className={`w-full text-left p-2.5 rounded-xl border transition flex items-center justify-between gap-2 ${
+                        isSelected
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-white'
+                          : 'bg-neutral-800/50 hover:bg-neutral-800 border-neutral-700/60 text-neutral-300'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-sm truncate flex items-center gap-1.5">
+                          <span className={isSelected ? 'text-emerald-300 font-semibold' : 'text-white'}>
+                            {it.product}
+                          </span>
+                          {it.brand && (
+                            <span className="text-xs text-neutral-400 truncate">· {it.brand}</span>
+                          )}
+                        </div>
+                        {(it.variant || it.specification) && (
+                          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-neutral-400 truncate">
+                            {it.variant && (
+                              <span className="px-1.5 py-0.2 rounded bg-neutral-700/50 text-[11px] text-neutral-300">
+                                {it.variant}
+                              </span>
+                            )}
+                            {it.specification && (
+                              <span className="px-1.5 py-0.2 rounded bg-neutral-700/50 text-[11px] text-neutral-300">
+                                {it.specification}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {isSelected && <Check className="h-4 w-4 text-emerald-400 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        ) : (
+          /* When no search query is active: Show current item & dropdown toggle */
+          <div className="space-y-2">
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-neutral-400">Selected Item:</span>
+              {items.length > 1 && (
+                <button
+                  onClick={() => setIsDropdownOpen((prev) => !prev)}
+                  className="text-xs text-emerald-400 hover:text-emerald-300 font-medium"
+                >
+                  {isDropdownOpen ? 'Hide item list' : `Browse all (${items.length})`}
+                </button>
+              )}
+            </div>
+
+            {selectedItem && (
+              <div className="p-3 bg-neutral-800/60 border border-neutral-700/70 rounded-xl flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-sm text-white truncate flex items-center gap-2">
+                    <span>{selectedItem.product}</span>
+                    {selectedItem.brand && (
+                      <span className="text-xs text-neutral-400 font-normal">· {selectedItem.brand}</span>
+                    )}
+                  </div>
+                  {(selectedItem.variant || selectedItem.specification) && (
+                    <div className="flex items-center gap-1.5 mt-1 text-xs text-neutral-400">
+                      {selectedItem.variant && (
+                        <span className="px-1.5 py-0.5 rounded bg-neutral-700/70 text-[11px] text-neutral-200">
+                          {selectedItem.variant}
+                        </span>
+                      )}
+                      {selectedItem.specification && (
+                        <span className="px-1.5 py-0.5 rounded bg-neutral-700/70 text-[11px] text-neutral-200">
+                          {selectedItem.specification}
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+                <span className="text-xs font-semibold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 shrink-0">
+                  Active
+                </span>
+              </div>
+            )}
+
+            {isDropdownOpen && items.length > 1 && (
+              <div className="max-h-56 overflow-y-auto space-y-1.5 pt-1 border-t border-neutral-800">
+                {items.map((it) => {
+                  const isSelected = it.id === effectiveId;
+                  return (
+                    <button
+                      key={it.id}
+                      onClick={() => handleSelectItem(it.id)}
+                      className={`w-full text-left p-2.5 rounded-xl border transition flex items-center justify-between gap-2 ${
+                        isSelected
+                          ? 'bg-emerald-500/15 border-emerald-500/40 text-white'
+                          : 'bg-neutral-800/40 hover:bg-neutral-800 border-neutral-700/40 text-neutral-300'
+                      }`}
+                    >
+                      <div className="min-w-0 flex-1">
+                        <div className="font-medium text-sm truncate flex items-center gap-1.5">
+                          <span className={isSelected ? 'text-emerald-300 font-semibold' : 'text-white'}>
+                            {it.product}
+                          </span>
+                          {it.brand && (
+                            <span className="text-xs text-neutral-400 truncate">· {it.brand}</span>
+                          )}
+                        </div>
+                        {(it.variant || it.specification) && (
+                          <div className="flex items-center gap-1.5 mt-0.5 text-xs text-neutral-400 truncate">
+                            {it.variant && (
+                              <span className="px-1.5 py-0.2 rounded bg-neutral-700/50 text-[11px] text-neutral-300">
+                                {it.variant}
+                              </span>
+                            )}
+                            {it.specification && (
+                              <span className="px-1.5 py-0.2 rounded bg-neutral-700/50 text-[11px] text-neutral-300">
+                                {it.specification}
+                              </span>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                      {isSelected && <Check className="h-4 w-4 text-emerald-400 shrink-0" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
+      {/* Main Content Area */}
       {!selectedItem ? (
-        <div className="flex flex-col items-center justify-center py-24 text-neutral-500 px-6 text-center">
+        <div className="flex flex-col items-center justify-center py-20 text-neutral-500 px-6 text-center">
           <LineIcon className="h-12 w-12 mb-3 text-neutral-700" />
-          <p className="text-neutral-300 font-medium">No data to show</p>
-          <p className="text-sm mt-1">Add items and record restocks to see price trends here.</p>
+          <p className="text-neutral-300 font-medium">No item selected</p>
+          <p className="text-sm mt-1">Select an item above to view its price statistics and history.</p>
         </div>
       ) : loading ? (
-        <div className="flex flex-col items-center justify-center py-24 text-neutral-500">
+        <div className="flex flex-col items-center justify-center py-20 text-neutral-500">
           <div className="h-8 w-8 border-2 border-neutral-700 border-t-emerald-400 rounded-full animate-spin mb-3" />
-          Loading history…
+          Loading price history…
         </div>
-      ) : chartData.length === 0 ? (
-        <div className="flex flex-col items-center justify-center py-20 text-neutral-500 px-6 text-center">
+      ) : validEntries.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-16 text-neutral-500 px-6 text-center bg-neutral-900/40 border border-neutral-800 rounded-2xl">
           <TrendingUp className="h-10 w-10 mb-3 text-neutral-700" />
           <p className="text-neutral-300 font-medium">No price history yet</p>
-          <p className="text-sm mt-1">
-            Restock {selectedItem.product} with a price to start tracking trends.
+          <p className="text-sm mt-1 max-w-sm text-neutral-400">
+            Record a restock or purchase price for{' '}
+            <strong className="text-white">{selectedItem.product}</strong> to view price insights.
           </p>
         </div>
       ) : (
         <>
-          {/* Basic price stats */}
-          {stats && (
-            <div className="grid grid-cols-3 gap-2">
-              <Stat label="Latest" value={`${stats.latest.toFixed(2)} RON`} />
-              <Stat label="Average" value={`${stats.avg.toFixed(2)} RON`} />
-              <Stat
-                label="Change"
-                value={`${stats.change >= 0 ? '+' : ''}${stats.change.toFixed(0)}%`}
-                tone={stats.change > 0 ? 'bad' : stats.change < 0 ? 'good' : 'neutral'}
+          {/* Price Statistics Summary Cards */}
+          {priceStats && (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+              <StatCard
+                label="Lowest Price"
+                value={priceStats.lowestPriceDisplay}
+                icon={<ArrowDown className="h-4 w-4 text-emerald-400" />}
+                tone="good"
+              />
+              <StatCard
+                label="Lowest Date"
+                value={priceStats.lowestDate}
+                icon={<Calendar className="h-4 w-4 text-neutral-400" />}
+                tone="neutral"
+              />
+              <StatCard
+                label="Latest Price"
+                value={priceStats.latestPriceDisplay}
+                icon={<Clock className="h-4 w-4 text-sky-400" />}
+                tone="sky"
+              />
+              <StatCard
+                label="Average Price"
+                value={priceStats.avgPriceDisplay}
+                icon={<TrendingUp className="h-4 w-4 text-amber-400" />}
+                tone="neutral"
               />
             </div>
           )}
 
-          {/* Latest entry price display */}
-          {latestEntry && (
-            <div className="bg-emerald-950/30 border border-emerald-900/50 rounded-2xl p-3 flex items-center justify-between">
-              <span className="text-xs text-neutral-400">Latest price</span>
-              <span className="text-sm font-semibold text-emerald-400 tabular-nums">
-                {latestEntry.priceDisplay}
+          {/* Interactive Price Paid Over Time Chart */}
+          <div className="bg-neutral-900/70 border border-neutral-800 rounded-2xl p-4 pt-5">
+            <div className="flex items-center justify-between mb-1">
+              <h3 className="text-sm font-medium text-neutral-300">Price Trend</h3>
+              <span className="text-xs text-neutral-500">
+                {priceStats?.count} {pluralize('entry', priceStats?.count ?? 0)}
               </span>
             </div>
-          )}
-
-          {/* Per-basis comparable statistics — only groups with 2+ entries for meaningful stats */}
-          {basisStats.length > 0 && (
-            <div className="bg-neutral-900/70 border border-neutral-800 rounded-2xl p-4 space-y-2">
-              <h3 className="text-sm font-medium text-neutral-300">Price per basis</h3>
-              <p className="text-xs text-neutral-500">Only entries sharing the same basis are compared.</p>
-              {basisStats.map((bs) => (
-                <div
-                  key={bs.basis}
-                  className="rounded-xl bg-neutral-800/40 border border-neutral-800 px-3 py-2.5 flex items-center justify-between gap-2"
-                >
-                  <span className="text-xs text-neutral-400 shrink-0">RON/{bs.basis}</span>
-                  <div className="flex items-center gap-3 text-xs tabular-nums">
-                    <span className="text-neutral-500">
-                      avg <span className="text-neutral-200">{bs.avg.toFixed(2)}</span>
-                    </span>
-                    <span className="text-neutral-500">
-                      min <span className="text-emerald-400">{bs.min.toFixed(2)}</span>
-                    </span>
-                    <span className="text-neutral-500">
-                      max <span className="text-red-400">{bs.max.toFixed(2)}</span>
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="bg-neutral-900/70 border border-neutral-800 rounded-2xl p-4 pt-6">
-            <h3 className="text-sm font-medium text-neutral-300 mb-1">
-              Price paid over time
-            </h3>
             <p className="text-xs text-neutral-500 mb-3">
               {selectedItem.product}
               {selectedItem.brand ? ` · ${selectedItem.brand}` : ''}
-              {selectedItem.variant ? ` · ${selectedItem.variant}` : ''}
+              {selectedItem.variant ? ` (${selectedItem.variant})` : ''}
               {selectedItem.specification ? ` · ${selectedItem.specification}` : ''}
             </p>
-            <div className="h-64 -ml-2">
+            <div className="h-60 -ml-2">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={chartData} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
+                <LineChart data={chronologicalHistory} margin={{ top: 8, right: 12, bottom: 0, left: 0 }}>
                   <defs>
                     <linearGradient id="priceLine" x1="0" y1="0" x2="1" y2="0">
                       <stop offset="0%" stopColor="#10b981" />
@@ -216,7 +411,7 @@ export function InsightsView({ items }: InsightsViewProps) {
                   </defs>
                   <CartesianGrid stroke="#262626" strokeDasharray="3 3" vertical={false} />
                   <XAxis
-                    dataKey="date"
+                    dataKey="chartDate"
                     tick={{ fill: '#737373', fontSize: 11 }}
                     tickLine={false}
                     axisLine={{ stroke: '#262626' }}
@@ -226,7 +421,7 @@ export function InsightsView({ items }: InsightsViewProps) {
                     tick={{ fill: '#737373', fontSize: 11 }}
                     tickLine={false}
                     axisLine={false}
-                    width={48}
+                    width={52}
                     tickFormatter={(v) => `${v} RON`}
                     domain={['dataMin - 0.5', 'dataMax + 0.5']}
                   />
@@ -244,6 +439,7 @@ export function InsightsView({ items }: InsightsViewProps) {
                       const lines: string[] = [p?.priceDisplay ?? `${value.toFixed(2)} RON`];
                       const qty = p?.qty ?? 0;
                       if (qty > 0) lines.push(`×${qty} ${pluralize('unit', qty)}`);
+                      if (p?.store) lines.push(`Store: ${p.store}`);
                       return lines;
                     }) as unknown as React.ComponentProps<typeof Tooltip>['formatter']}
                   />
@@ -259,44 +455,64 @@ export function InsightsView({ items }: InsightsViewProps) {
                         <></>
                       )
                     }
-                    activeDot={{ r: 6, fill: "#34d399", stroke: "#0a0a0a", strokeWidth: 2 }}
+                    activeDot={{ r: 6, fill: '#34d399', stroke: '#0a0a0a', strokeWidth: 2 }}
                   />
                 </LineChart>
               </ResponsiveContainer>
             </div>
           </div>
 
+          {/* Chronological Price History List */}
           <div className="bg-neutral-900/70 border border-neutral-800 rounded-2xl p-4">
-            <h3 className="text-sm font-medium text-neutral-300 mb-3">Restock log</h3>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-neutral-300">Price History</h3>
+              <span className="text-xs text-neutral-500">Chronological (earliest first)</span>
+            </div>
             <ul className="divide-y divide-neutral-800">
-              {history
-                .slice()
-                .reverse()
-                .map((h: RestockEntry) => {
-                  const priceNum = h.price != null ? Number(h.price) : null;
-                  const basis = (h.price_basis as PriceBasis | undefined) ?? null;
-                  const display =
-                    priceNum != null && !Number.isNaN(priceNum) && priceNum > 0
-                      ? formatPriceWithBasis(priceNum, basis) || `${priceNum.toFixed(2)} RON`
-                      : '—';
-                  return (
-                    <li key={h.id} className="py-2.5 flex items-center justify-between text-sm">
-                      <span className="text-neutral-400">
-                        {new Date(h.restocked_at).toLocaleDateString(undefined, {
-                          month: 'short',
-                          day: 'numeric',
-                          year: 'numeric',
-                        })}
-                      </span>
-                      <span className="flex items-center gap-3">
-                        {h.quantity > 0 && (
-                          <span className="text-neutral-500">×{h.quantity}</span>
+              {chronologicalHistory.map((h) => {
+                return (
+                  <li
+                    key={h.id}
+                    className="py-3 flex items-center justify-between gap-3 text-sm"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="text-neutral-200 font-medium">
+                          {h.dateFormatted}
+                        </span>
+
+                        {/* Lowest price badge */}
+                        {h.isLowest && (
+                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
+                            <ArrowDown className="h-3 w-3" /> Lowest
+                          </span>
                         )}
-                        <span className="text-white font-medium tabular-nums">{display}</span>
+
+                        {/* Latest price badge */}
+                        {h.isLatest && (
+                          <span className="inline-flex items-center gap-0.5 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-500/20 text-sky-400 border border-sky-500/30">
+                            <Clock className="h-3 w-3" /> Latest
+                          </span>
+                        )}
+                      </div>
+
+                      {(h.store || h.notes || h.qty > 0) && (
+                        <div className="flex items-center gap-2 mt-0.5 text-xs text-neutral-500">
+                          {h.qty > 0 && <span>Qty: ×{h.qty}</span>}
+                          {h.store && <span>· {h.store}</span>}
+                          {h.notes && <span>· {h.notes}</span>}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="text-right shrink-0">
+                      <span className="text-white font-semibold tabular-nums text-sm">
+                        {h.priceDisplay}
                       </span>
-                    </li>
-                  );
-                })}
+                    </div>
+                  </li>
+                );
+              })}
             </ul>
           </div>
         </>
@@ -305,25 +521,35 @@ export function InsightsView({ items }: InsightsViewProps) {
   );
 }
 
-function Stat({
+function StatCard({
   label,
   value,
+  icon,
   tone = 'neutral',
 }: {
   label: string;
   value: string;
-  tone?: 'good' | 'bad' | 'neutral';
+  icon?: React.ReactNode;
+  tone?: 'good' | 'bad' | 'sky' | 'neutral';
 }) {
   const toneClass =
     tone === 'good'
       ? 'text-emerald-400'
       : tone === 'bad'
         ? 'text-red-400'
-        : 'text-white';
+        : tone === 'sky'
+          ? 'text-sky-400'
+          : 'text-white';
+
   return (
-    <div className="bg-neutral-900/70 border border-neutral-800 rounded-2xl p-3 text-center">
-      <div className="text-[10px] uppercase tracking-wide text-neutral-500 font-medium">{label}</div>
-      <div className={`text-base font-semibold tabular-nums mt-0.5 ${toneClass}`}>{value}</div>
+    <div className="bg-neutral-900/80 border border-neutral-800 rounded-2xl p-3 flex flex-col justify-between">
+      <div className="flex items-center justify-between text-neutral-500 mb-1">
+        <span className="text-[10px] uppercase tracking-wider font-semibold">{label}</span>
+        {icon}
+      </div>
+      <div className={`text-sm sm:text-base font-bold tabular-nums truncate ${toneClass}`}>
+        {value}
+      </div>
     </div>
   );
 }
