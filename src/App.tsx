@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, lazy, Suspense } from 'react';
+import { useRef, useState, lazy, Suspense } from 'react';
 import { Package, ShoppingCart, BarChart3, Plus, AlertTriangle } from 'lucide-react';
 import type { TabKey, InventoryItem, ShoppingItem, ProductInput, RestockInput, ShoppingItemInput } from './types';
 import { useInventory, useShoppingItems } from './hooks';
@@ -12,10 +12,11 @@ const InsightsView = lazy(() => import('./InsightsView').then(m => ({ default: m
 
 const TABS: TabKey[] = ['inventory', 'shopping', 'insights'];
 
-/** Count distinct products whose total unopened stock across all rows is zero. */
+/** Count distinct products whose total unopened stock across all restockable rows is zero. */
 function outOfStockProductCount(items: InventoryItem[]): number {
   const totals = new Map<string, number>();
   for (const it of items) {
+    if (it.restock_enabled === false) continue;
     totals.set(it.product, (totals.get(it.product) ?? 0) + it.count);
   }
   let count = 0;

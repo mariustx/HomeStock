@@ -157,6 +157,7 @@ function validateInventoryItem(item: unknown, index: number): InventoryItem {
   if (!isNullableString(it.notes)) throw new Error(`inventory[${index}].notes must be string|null`);
   if (typeof it.is_on_manual_list !== 'boolean') throw new Error(`inventory[${index}].is_on_manual_list must be a boolean`);
   if (!isNullableString(it.opened_at)) throw new Error(`inventory[${index}].opened_at must be string|null`);
+  if (!isBooleanOrUndefined(it.restock_enabled)) throw new Error(`inventory[${index}].restock_enabled must be a boolean or undefined`);
   if (!isString(it.created_at)) throw new Error(`inventory[${index}].created_at must be a string`);
 
   return it as unknown as InventoryItem;

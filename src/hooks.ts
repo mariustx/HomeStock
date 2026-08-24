@@ -85,6 +85,7 @@ export function useInventory() {
       notes: input.notes?.trim() || null,
       is_on_manual_list: false,
       opened_at: input.openedAt ?? null,
+      restock_enabled: input.restock_enabled !== false,
       created_at: now,
     };
     await db.inventory.add(newItem);
@@ -119,7 +120,8 @@ export function useInventory() {
       count: input.count,
       min_stock: input.min_stock ?? 0,
       notes: input.notes?.trim() || null,
-      opened_at: input.openedAt ?? existing.opened_at,
+      opened_at: input.openedAt !== undefined ? input.openedAt : (existing.opened_at ?? null),
+      restock_enabled: input.restock_enabled !== undefined ? input.restock_enabled : (existing.restock_enabled !== false),
     };
     await db.inventory.put(updated);
     setItems((prev) => prev.map((it) => (it.id === id ? updated : it)).sort(sortAlpha));
@@ -136,24 +138,25 @@ export function useInventory() {
   }, []);
 
   const adjustCount = useCallback(async (id: string, delta: number) => {
-    setItems((prev) =>
-      prev.map((it) => (it.id === id ? { ...it, count: Math.max(0, it.count + delta) } : it)),
-    );
     const existing = await db.inventory.get(id);
     if (!existing) throw new Error('Inventory item not found');
     const next = Math.max(0, existing.count + delta);
+    const shouldSetOpenedAt = delta < 0 && existing.count > 0 && !existing.opened_at;
+    const nowIso = new Date().toISOString();
     const updateData: Partial<InventoryItem> = { count: next };
-    if (delta < 0 && existing.opened_at === null) {
-      updateData.opened_at = new Date().toISOString();
+    if (shouldSetOpenedAt) {
+      updateData.opened_at = nowIso;
     }
+
+    setItems((prev) =>
+      prev.map((it) =>
+        it.id === id
+          ? { ...it, count: next, ...(shouldSetOpenedAt ? { opened_at: nowIso } : {}) }
+          : it,
+      ),
+    );
+
     await db.inventory.update(id, updateData);
-    if (delta < 0 && existing.opened_at === null) {
-      setItems((prev) =>
-        prev.map((it) =>
-          it.id === id ? { ...it, count: next, opened_at: updateData.opened_at! } : it,
-        ),
-      );
-    }
   }, []);
 
   const restock = useCallback(

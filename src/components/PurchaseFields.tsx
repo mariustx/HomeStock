@@ -58,14 +58,16 @@ export function PriceInput({
 export function DateInput({
   value,
   onChange,
+  label = 'Date',
   id,
 }: {
   value: string;
   onChange: (v: string) => void;
+  label?: string;
   id?: string;
 }) {
   return (
-    <Field label="Purchase date">
+    <Field label={label}>
       <input
         id={id}
         type="date"

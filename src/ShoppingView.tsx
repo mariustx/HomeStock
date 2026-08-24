@@ -64,9 +64,10 @@ export function ShoppingView({
 
   const q = query.trim().toLowerCase();
 
-  // Product-level auto shopping list: a product appears only when total stock = 0.
+  // Product-level auto shopping list: a product appears only when total stock = 0 and restock is enabled.
   const outOfStockProducts = useMemo<ProductGroup[]>(() => {
-    const all = groupByProduct(inventoryItems);
+    const restockable = inventoryItems.filter((it) => it.restock_enabled !== false);
+    const all = groupByProduct(restockable);
     return all
       .filter((g) => g.totalStock === 0)
       .filter((g) => (q ? groupMatches(g, q) : true));

@@ -16,6 +16,7 @@ export interface InventoryItem {
   notes: string | null;
   is_on_manual_list: boolean;
   opened_at: string | null;
+  restock_enabled?: boolean;
   created_at: string;
 }
 
@@ -54,6 +55,7 @@ export type ProductInput = {
   min_stock?: number;
   notes?: string | null;
   openedAt?: string | null;
+  restock_enabled?: boolean;
   /** Optional price spotted at a store — saved to restock_history without changing stock. */
   price?: number | null;
   purchaseDate?: string | null;

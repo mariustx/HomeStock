@@ -35,6 +35,7 @@ interface ProductFormState {
   count: string;
   notes: string;
   openedAt: string;
+  restock_enabled: boolean;
   purchase: PurchaseState;
 }
 
@@ -51,6 +52,7 @@ const DEFAULTS: ProductFormState = {
   count: '0',
   notes: '',
   openedAt: '',
+  restock_enabled: true,
   purchase: { price: '', date: todayISO(), store: '' },
 };
 
@@ -132,6 +134,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
           count: String(itemToEdit.count),
           notes: itemToEdit.notes ?? '',
           openedAt: timestamptzToDateInput(itemToEdit.opened_at),
+          restock_enabled: itemToEdit.restock_enabled !== false,
           purchase: { price: '', date: todayISO(), store: '' },
         };
       } else {
@@ -238,6 +241,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
     if (form.notes.trim() !== '') n++;
     if (!isPurchaseEmpty(form.purchase)) n++;
     if (form.openedAt.trim() !== '') n++;
+    if (!form.restock_enabled) n++;
     return n;
   })();
 
@@ -286,6 +290,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
         min_stock: minStock,
         notes: form.notes || null,
         openedAt: dateInputToTimestamptz(form.openedAt),
+        restock_enabled: form.restock_enabled,
         price: parsed.price,
         purchaseDate: parsed.date,
         store: parsed.store,
@@ -420,23 +425,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
               {/* More options content */}
               {showMore && (
                 <div className="space-y-3 animate-[fadeIn_150ms_ease-out]">
-                  <Field label="Tracking mode" required>
-                    <div className="grid grid-cols-2 gap-2">
-                      <ModeOption
-                        active={form.tracking_mode === 'packages'}
-                        onClick={() => setForm({ ...form, tracking_mode: 'packages' })}
-                        title="Unopened packages"
-                        desc="Count whole packages"
-                      />
-                      <ModeOption
-                        active={form.tracking_mode === 'units'}
-                        onClick={() => setForm({ ...form, tracking_mode: 'units' })}
-                        title="Individual units"
-                        desc="Count each unit"
-                      />
-                    </div>
-                  </Field>
-
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Current stock">
                       <StepperInput
@@ -459,6 +447,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                     value={form.purchase.date}
                     onChange={(v) => setP({ date: v })}
                     id="product-date"
+                    label="Date"
                   />
                   <StoreInput
                     value={form.purchase.store}
@@ -487,6 +476,23 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                       enterKeyHint="next"
                       className="input"
                     />
+                  </Field>
+
+                  <Field label="Stock tracking" required>
+                    <div className="grid grid-cols-2 gap-2">
+                      <ModeOption
+                        active={form.tracking_mode === 'packages'}
+                        onClick={() => setForm({ ...form, tracking_mode: 'packages' })}
+                        title="Unopened packages"
+                        desc="Count whole packages"
+                      />
+                      <ModeOption
+                        active={form.tracking_mode === 'units'}
+                        onClick={() => setForm({ ...form, tracking_mode: 'units' })}
+                        title="Individual units"
+                        desc="Count each unit"
+                      />
+                    </div>
                   </Field>
 
                   <div className="grid grid-cols-2 gap-3">
@@ -556,6 +562,31 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                       )}
                     </div>
                   </Field>
+
+                  {/* Restock automatically */}
+                  <div className="rounded-xl border border-neutral-800 bg-neutral-800/40 p-3.5 flex items-center justify-between gap-3">
+                    <div className="min-w-0 flex-1">
+                      <div className="text-sm font-medium text-white">Restock automatically</div>
+                      <div className="text-xs text-neutral-500 mt-0.5">
+                        Add to shopping list when stock is low
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={form.restock_enabled}
+                      onClick={() => setForm((prev) => ({ ...prev, restock_enabled: !prev.restock_enabled }))}
+                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                        form.restock_enabled ? 'bg-emerald-600' : 'bg-neutral-700'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                          form.restock_enabled ? 'translate-x-5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
                 </div>
               )}
 
