@@ -72,12 +72,28 @@ export async function exportBackup(): Promise<void> {
     typeof shareApi.canShare === 'function' &&
     shareApi.canShare({ files: [file] })
   ) {
-    await shareApi.share({
-      files: [file],
-      title: 'HomeStock Backup',
-      text: `HomeStock backup – ${dateStr}`,
-    });
-    return;
+    try {
+      await shareApi.share({
+        files: [file],
+        title: 'HomeStock Backup',
+        text: `HomeStock backup – ${dateStr}`,
+      });
+      return;
+    } catch (e) {
+      if (e instanceof Error) {
+        // User dismissed the share sheet — treat as a silent cancellation.
+        if (e.name === 'AbortError') return;
+        // NotAllowedError = browser dropped the user-gesture token across the
+        // async DB read. Fall through to the <a download> fallback silently.
+        if (e.name === 'NotAllowedError') {
+          /* fall through */
+        } else {
+          throw e; // Re-throw any unexpected error.
+        }
+      } else {
+        throw e;
+      }
+    }
   }
 
   // Fallback: trigger a browser download via a temporary anchor element.
