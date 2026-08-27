@@ -8,7 +8,6 @@ import type {
   RestockInput,
   ShoppingItemInput,
   TrackingMode,
-  PriceBasis,
 } from './types';
 import { restockAddAmount } from './types';
 
@@ -32,7 +31,6 @@ async function insertPriceEntry(opts: {
   trackingMode?: TrackingMode | null;
   packagesPurchased?: number | null;
   quantity?: number;
-  priceBasis?: PriceBasis | null;
 }): Promise<void> {
   await db.restock_history.add({
     id: generateId(),
@@ -44,7 +42,6 @@ async function insertPriceEntry(opts: {
     restocked_at: opts.restockedAt,
     store: opts.store?.trim() || null,
     notes: opts.notes?.trim() || null,
-    price_basis: opts.priceBasis ?? null,
   });
 }
 
@@ -88,8 +85,6 @@ export function useInventory() {
       notes: input.notes?.trim() || null,
       is_on_manual_list: false,
       opened_at: input.openedAt ?? null,
-      restock_enabled: input.restock_enabled !== false,
-      price_basis: input.price_basis ?? null,
       created_at: now,
     };
     await db.inventory.add(newItem);
@@ -102,7 +97,6 @@ export function useInventory() {
         store: input.store ?? null,
         trackingMode: input.tracking_mode,
         quantity: 0,
-        priceBasis: input.price_basis ?? null,
       });
     }
     return newItem;
@@ -125,9 +119,7 @@ export function useInventory() {
       count: input.count,
       min_stock: input.min_stock ?? 0,
       notes: input.notes?.trim() || null,
-      opened_at: input.openedAt !== undefined ? input.openedAt : (existing.opened_at ?? null),
-      restock_enabled: input.restock_enabled !== undefined ? input.restock_enabled : (existing.restock_enabled !== false),
-      price_basis: input.price_basis !== undefined ? (input.price_basis ?? null) : (existing.price_basis ?? null),
+      opened_at: input.openedAt ?? existing.opened_at,
     };
     await db.inventory.put(updated);
     setItems((prev) => prev.map((it) => (it.id === id ? updated : it)).sort(sortAlpha));
@@ -139,31 +131,29 @@ export function useInventory() {
         store: input.store ?? null,
         trackingMode: input.tracking_mode,
         quantity: 0,
-        priceBasis: input.price_basis ?? existing.price_basis ?? null,
       });
     }
   }, []);
 
   const adjustCount = useCallback(async (id: string, delta: number) => {
+    setItems((prev) =>
+      prev.map((it) => (it.id === id ? { ...it, count: Math.max(0, it.count + delta) } : it)),
+    );
     const existing = await db.inventory.get(id);
     if (!existing) throw new Error('Inventory item not found');
     const next = Math.max(0, existing.count + delta);
-    const shouldSetOpenedAt = delta < 0 && existing.count > 0 && !existing.opened_at;
-    const nowIso = new Date().toISOString();
     const updateData: Partial<InventoryItem> = { count: next };
-    if (shouldSetOpenedAt) {
-      updateData.opened_at = nowIso;
+    if (delta < 0 && existing.opened_at === null) {
+      updateData.opened_at = new Date().toISOString();
     }
-
-    setItems((prev) =>
-      prev.map((it) =>
-        it.id === id
-          ? { ...it, count: next, ...(shouldSetOpenedAt ? { opened_at: nowIso } : {}) }
-          : it,
-      ),
-    );
-
     await db.inventory.update(id, updateData);
+    if (delta < 0 && existing.opened_at === null) {
+      setItems((prev) =>
+        prev.map((it) =>
+          it.id === id ? { ...it, count: next, opened_at: updateData.opened_at! } : it,
+        ),
+      );
+    }
   }, []);
 
   const restock = useCallback(
@@ -192,7 +182,6 @@ export function useInventory() {
           restocked_at: input.restockedAt,
           store: input.store?.trim() || null,
           notes: input.notes?.trim() || null,
-          price_basis: input.price_basis ?? null,
         });
         return newCount;
       });

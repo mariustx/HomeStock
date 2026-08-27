@@ -1,5 +1,4 @@
 export type TrackingMode = 'packages' | 'units';
-export type PriceBasis = 'kg' | 'L' | 'piece' | 'package';
 
 export interface InventoryItem {
   id: string;
@@ -17,19 +16,6 @@ export interface InventoryItem {
   notes: string | null;
   is_on_manual_list: boolean;
   opened_at: string | null;
-  restock_enabled?: boolean;
-  /** Price basis for price-tracking purposes only. Does not affect stock. */
-  price_basis?: PriceBasis | null;
-  /**
-   * @deprecated Use price_basis instead.
-   * Retained for backward compatibility with old records/backups.
-   */
-  comparison_quantity?: number | null;
-  /**
-   * @deprecated Use price_basis instead.
-   * Retained for backward compatibility with old records/backups.
-   */
-  comparison_unit?: string | null;
   created_at: string;
 }
 
@@ -43,18 +29,6 @@ export interface RestockEntry {
   tracking_mode: TrackingMode | null;
   store: string | null;
   notes: string | null;
-  /** Price basis for this specific price entry. Does not affect stock. */
-  price_basis?: PriceBasis | null;
-  /**
-   * @deprecated Use price_basis instead.
-   * Retained for backward compatibility with old records/backups.
-   */
-  comparison_quantity?: number | null;
-  /**
-   * @deprecated Use price_basis instead.
-   * Retained for backward compatibility with old records/backups.
-   */
-  comparison_unit?: string | null;
 }
 
 export interface ShoppingItem {
@@ -80,8 +54,6 @@ export type ProductInput = {
   min_stock?: number;
   notes?: string | null;
   openedAt?: string | null;
-  restock_enabled?: boolean;
-  price_basis?: PriceBasis | null;
   /** Optional price spotted at a store — saved to restock_history without changing stock. */
   price?: number | null;
   purchaseDate?: string | null;
@@ -97,7 +69,6 @@ export type RestockInput = {
   restockedAt: string;
   store?: string | null;
   notes?: string | null;
-  price_basis?: PriceBasis | null;
 };
 
 export type ShoppingItemInput = {
@@ -112,13 +83,6 @@ export type TabKey = 'inventory' | 'shopping' | 'insights';
 export const STOCK_UNIT_SUGGESTIONS = ['piece', 'roll', 'bottle', 'tube', 'can', 'jar', 'tablet', 'capsule', 'pair', 'box', 'bag'] as const;
 export const PACKAGE_SUGGESTIONS = ['Piece', 'Pack', 'Box', 'Tray', 'Carton', 'Bag', 'Crate', 'Bundle', 'Set'] as const;
 export const SPECIFICATION_SUGGESTIONS = ['400 mL', '700 mL', '1 L', '1 kg', '400 g', '3-ply', 'AA', 'AAA', 'E27', 'Sensitive'] as const;
-
-export const PRICE_BASIS_OPTIONS: readonly { value: PriceBasis; label: string }[] = [
-  { value: 'kg', label: 'per kg' },
-  { value: 'L', label: 'per L' },
-  { value: 'piece', label: 'per piece' },
-  { value: 'package', label: 'per package' },
-] as const;
 
 export const TRACKING_MODE_LABELS: Record<TrackingMode, string> = {
   packages: 'Unopened packages',
@@ -178,28 +142,72 @@ export function restockAddAmount(
 }
 
 /**
- * Format a price with an optional price basis for display.
- *
- * Examples:
- *   formatPriceWithBasis(3.99, 'kg')      → '3.99 RON/kg'
- *   formatPriceWithBasis(7.50, 'L')       → '7.50 RON/L'
- *   formatPriceWithBasis(0.80, 'piece')   → '0.80 RON/piece'
- *   formatPriceWithBasis(3.50, 'package') → '3.50 RON/package'
- *   formatPriceWithBasis(3.50, null)      → '3.50 RON'
+ * Parse a specification string like "400 g", "700 mL", "1 L", "90 pieces"
+ * into a numeric amount and unit for comparable-price calculation.
+ * Returns null when the spec can't be parsed.
  */
-export function formatPriceWithBasis(
-  price: number | null | undefined,
-  basis: PriceBasis | null | undefined,
-): string {
-  if (price == null || Number.isNaN(price) || !Number.isFinite(price) || price < 0) return '';
-  const priceStr = Number.isInteger(price) ? String(price) : price.toFixed(2);
-  if (basis) {
-    return `${priceStr} RON/${basis}`;
-  }
-  return `${priceStr} RON`;
+export interface ParsedSpec {
+  amount: number;
+  unit: string;
 }
 
-/** Returns true if the value is a valid PriceBasis. */
-export function isValidPriceBasis(v: unknown): v is PriceBasis {
-  return v === 'kg' || v === 'L' || v === 'piece' || v === 'package';
+export function parseSpec(spec: string | null | undefined): ParsedSpec | null {
+  if (!spec || !spec.trim()) return null;
+  const match = spec.trim().match(/^([\d.]+)\s*([a-zA-Z]+)$/);
+  if (!match) return null;
+  const amount = parseFloat(match[1]);
+  const unit = match[2].toLowerCase();
+  if (Number.isNaN(amount) || amount <= 0) return null;
+  return { amount, unit };
+}
+
+/**
+ * Compute a comparable unit price from a purchase price and a specification.
+ * Normalises weights (g→kg) and volumes (mL→L) so prices are comparable
+ * across different package sizes.
+ *
+ * Examples:
+ *   price=8, spec="400 g"  → 20 RON/kg
+ *   price=24, spec="1 L"   → 2.40 RON/100mL  (returned as 24 RON/L, caller formats)
+ *   price=18, spec="90 pieces" → 0.20 RON/piece
+ *
+ * Returns { price, unitLabel } or null.
+ */
+export function comparablePrice(
+  price: number,
+  spec: string | null | undefined,
+): { price: number; unitLabel: string } | null {
+  const parsed = parseSpec(spec);
+  if (!parsed) return null;
+  const { amount, unit } = parsed;
+
+  // Weight: normalise to per-kg (or per-100g for small amounts)
+  if (unit === 'g' || unit === 'gr' || unit === 'grams') {
+    const perKg = (price / amount) * 1000;
+    return { price: perKg, unitLabel: 'RON/kg' };
+  }
+  if (unit === 'kg' || unit === 'kilos' || unit === 'kilogram') {
+    return { price: price / amount, unitLabel: 'RON/kg' };
+  }
+
+  // Volume: normalise to per-litre
+  if (unit === 'ml' || unit === 'milliliter' || unit === 'millilitre') {
+    const perL = (price / amount) * 1000;
+    return { price: perL, unitLabel: 'RON/L' };
+  }
+  if (unit === 'l' || unit === 'liter' || unit === 'litre') {
+    return { price: price / amount, unitLabel: 'RON/L' };
+  }
+
+  // Countable: pieces, capsules, tablets, rolls, etc.
+  return { price: price / amount, unitLabel: `RON/${unit}` };
+}
+
+/**
+ * Format a comparable price for display.
+ */
+export function formatComparable(price: number, unitLabel: string): string {
+  if (price >= 100) return `${price.toFixed(0)} ${unitLabel}`;
+  if (price >= 10) return `${price.toFixed(1)} ${unitLabel}`;
+  return `${price.toFixed(2)} ${unitLabel}`;
 }

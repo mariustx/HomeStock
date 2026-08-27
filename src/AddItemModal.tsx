@@ -1,15 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ChevronDown, AlertTriangle } from 'lucide-react';
-import type { InventoryItem, ProductInput, TrackingMode, PriceBasis } from './types';
-import {
-  timestamptzToDateInput,
-  dateInputToTimestamptz,
-  STOCK_UNIT_SUGGESTIONS,
-  PACKAGE_SUGGESTIONS,
-  SPECIFICATION_SUGGESTIONS,
-  PRICE_BASIS_OPTIONS,
-  formatPriceWithBasis,
-} from './types';
+import type { InventoryItem, ProductInput, TrackingMode } from './types';
+import { timestamptzToDateInput, dateInputToTimestamptz } from './types';
+import { STOCK_UNIT_SUGGESTIONS, PACKAGE_SUGGESTIONS, SPECIFICATION_SUGGESTIONS } from './types';
 import { PriceInput, DateInput, StoreInput } from './components/PurchaseFields';
 import {
   emptyPurchaseState,
@@ -42,8 +35,6 @@ interface ProductFormState {
   count: string;
   notes: string;
   openedAt: string;
-  restock_enabled: boolean;
-  price_basis: PriceBasis | '';
   purchase: PurchaseState;
 }
 
@@ -60,8 +51,6 @@ const DEFAULTS: ProductFormState = {
   count: '0',
   notes: '',
   openedAt: '',
-  restock_enabled: true,
-  price_basis: '',
   purchase: { price: '', date: todayISO(), store: '' },
 };
 
@@ -143,8 +132,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
           count: String(itemToEdit.count),
           notes: itemToEdit.notes ?? '',
           openedAt: timestamptzToDateInput(itemToEdit.opened_at),
-          restock_enabled: itemToEdit.restock_enabled !== false,
-          price_basis: (itemToEdit.price_basis as PriceBasis | undefined) ?? '',
           purchase: { price: '', date: todayISO(), store: '' },
         };
       } else {
@@ -177,6 +164,8 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
     };
   }, [open]);
 
+  if (!open) return null;
+
   const setP = (patch: Partial<PurchaseState>) =>
     setForm((prev) => ({ ...prev, purchase: { ...prev.purchase, ...patch } }));
 
@@ -193,9 +182,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
           next.tracking_mode = match.tracking_mode ?? 'packages';
           next.purchase_package = match.purchase_package ?? '';
           next.units_per_package = String(match.units_per_package ?? 1);
-          if (match.price_basis) {
-            next.price_basis = match.price_basis;
-          }
         }
       }
       return next;
@@ -252,16 +238,8 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
     if (form.notes.trim() !== '') n++;
     if (!isPurchaseEmpty(form.purchase)) n++;
     if (form.openedAt.trim() !== '') n++;
-    if (!form.restock_enabled) n++;
-    if (form.price_basis !== '') n++;
     return n;
   })();
-
-  const parsedPrice = form.purchase.price.trim() ? parseFloat(form.purchase.price) : null;
-  const pricePreview =
-    parsedPrice != null && !Number.isNaN(parsedPrice) && parsedPrice > 0
-      ? formatPriceWithBasis(parsedPrice, form.price_basis || null)
-      : null;
 
   const attemptClose = () => {
     if (submitting) return;
@@ -292,7 +270,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
       return;
     }
     const parsed = parsePurchase(form.purchase);
-
     setSubmitting(true);
     setErr(null);
     try {
@@ -309,8 +286,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
         min_stock: minStock,
         notes: form.notes || null,
         openedAt: dateInputToTimestamptz(form.openedAt),
-        restock_enabled: form.restock_enabled,
-        price_basis: form.price_basis || null,
         price: parsed.price,
         purchaseDate: parsed.date,
         store: parsed.store,
@@ -321,8 +296,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
       setSubmitting(false);
     }
   };
-
-  if (!open) return null;
 
   return (
     <>
@@ -423,18 +396,9 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                 onChange={(v) => setP({ price: v })}
                 id="product-price"
               />
-              {pricePreview ? (
-                <div className="flex items-center gap-1.5 -mt-1 text-xs text-emerald-400">
-                  <span className="text-neutral-500">Price:</span>
-                  <span className="font-semibold tabular-nums bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full">
-                    {pricePreview}
-                  </span>
-                </div>
-              ) : (
-                <p className="text-[11px] text-neutral-500 -mt-2">
-                  Record a price you spotted, even if you haven't bought it yet.
-                </p>
-              )}
+              <p className="text-[11px] text-neutral-500 -mt-2">
+                Record a price you spotted, even if you haven't bought it yet.
+              </p>
 
               {/* More options toggle */}
               <button
@@ -456,6 +420,23 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
               {/* More options content */}
               {showMore && (
                 <div className="space-y-3 animate-[fadeIn_150ms_ease-out]">
+                  <Field label="Tracking mode" required>
+                    <div className="grid grid-cols-2 gap-2">
+                      <ModeOption
+                        active={form.tracking_mode === 'packages'}
+                        onClick={() => setForm({ ...form, tracking_mode: 'packages' })}
+                        title="Unopened packages"
+                        desc="Count whole packages"
+                      />
+                      <ModeOption
+                        active={form.tracking_mode === 'units'}
+                        onClick={() => setForm({ ...form, tracking_mode: 'units' })}
+                        title="Individual units"
+                        desc="Count each unit"
+                      />
+                    </div>
+                  </Field>
+
                   <div className="grid grid-cols-2 gap-3">
                     <Field label="Current stock">
                       <StepperInput
@@ -478,7 +459,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                     value={form.purchase.date}
                     onChange={(v) => setP({ date: v })}
                     id="product-date"
-                    label="Date"
                   />
                   <StoreInput
                     value={form.purchase.store}
@@ -486,37 +466,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                     id="product-store"
                     suggestions={storeSuggestions}
                   />
-
-                  {/* Price basis */}
-                  <div className="rounded-2xl bg-neutral-800/40 border border-neutral-800 p-3.5 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs font-semibold text-neutral-300 uppercase tracking-wide">
-                        Price basis <span className="text-neutral-500 font-normal lowercase">(optional)</span>
-                      </span>
-                      {pricePreview && (
-                        <span className="text-xs font-semibold text-emerald-400 bg-emerald-950/60 border border-emerald-800/60 px-2 py-0.5 rounded-full tabular-nums">
-                          {pricePreview}
-                        </span>
-                      )}
-                    </div>
-                    <p className="text-[11px] text-neutral-500 -mt-1">
-                      Select what unit the entered price is per. Stock is still tracked by whole packages/units.
-                    </p>
-                    <Field label="Price basis">
-                      <select
-                        value={form.price_basis}
-                        onChange={(e) => setForm({ ...form, price_basis: e.target.value as PriceBasis | '' })}
-                        className="input"
-                      >
-                        <option value="">None</option>
-                        {PRICE_BASIS_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
-                    </Field>
-                  </div>
 
                   <Field label="Variant">
                     <input
@@ -538,23 +487,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                       enterKeyHint="next"
                       className="input"
                     />
-                  </Field>
-
-                  <Field label="Stock tracking" required>
-                    <div className="grid grid-cols-2 gap-2">
-                      <ModeOption
-                        active={form.tracking_mode === 'packages'}
-                        onClick={() => setForm({ ...form, tracking_mode: 'packages' })}
-                        title="Unopened packages"
-                        desc="Count whole packages"
-                      />
-                      <ModeOption
-                        active={form.tracking_mode === 'units'}
-                        onClick={() => setForm({ ...form, tracking_mode: 'units' })}
-                        title="Individual units"
-                        desc="Count each unit"
-                      />
-                    </div>
                   </Field>
 
                   <div className="grid grid-cols-2 gap-3">
@@ -585,6 +517,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
 
                   <Field
                     label="Units per package"
+                    hint={form.tracking_mode === 'packages' ? 'For comparable price' : undefined}
                   >
                     <StepperInput
                       value={form.units_per_package}
@@ -623,31 +556,6 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                       )}
                     </div>
                   </Field>
-
-                  {/* Restock automatically */}
-                  <div className="rounded-xl border border-neutral-800 bg-neutral-800/40 p-3.5 flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-white">Restock automatically</div>
-                      <div className="text-xs text-neutral-500 mt-0.5">
-                        Add to shopping list when stock is low
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={form.restock_enabled}
-                      onClick={() => setForm((prev) => ({ ...prev, restock_enabled: !prev.restock_enabled }))}
-                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        form.restock_enabled ? 'bg-emerald-600' : 'bg-neutral-700'
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                          form.restock_enabled ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
                 </div>
               )}
 
