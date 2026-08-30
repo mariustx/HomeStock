@@ -1,6 +1,8 @@
 import { useMemo, useState } from 'react';
-import { Minus, Plus, Trash2, PackageSearch, Search, X, Package, Layers, ChevronRight, Boxes } from 'lucide-react';
+import { Minus, Plus, Trash2, PackageSearch, Search, X, Package, Layers, ChevronRight, Boxes, Clock } from 'lucide-react';
 import { pluralize, TRACKING_MODE_SHORT, formatDateOnly, type InventoryItem } from './types';
+import { useAllConsumptionStats } from './hooks';
+import { formatConsumptionDuration } from './lib/consumption';
 
 interface InventoryViewProps {
   items: InventoryItem[];
@@ -20,6 +22,7 @@ interface ProductGroup {
   minStockSum: number;
   outOfStock: boolean;
   lowStock: boolean;
+  isConsumable: boolean;
 }
 
 function groupByProduct(items: InventoryItem[]): ProductGroup[] {
@@ -32,12 +35,24 @@ function groupByProduct(items: InventoryItem[]): ProductGroup[] {
   }
   const groups: ProductGroup[] = [];
   for (const [product, groupItems] of map) {
+    const isConsumable = groupItems.some((it) => it.consumable !== false);
     const totalStock = groupItems.reduce((sum, it) => sum + it.count, 0);
-    const minStockSum = groupItems.reduce((sum, it) => sum + it.min_stock, 0);
+    const minStockSum = isConsumable
+      ? groupItems.reduce((sum, it) => (it.consumable !== false ? sum + it.min_stock : sum), 0)
+      : 0;
     const brandCount = new Set(groupItems.map((it) => it.brand ?? '').filter(Boolean)).size;
-    const outOfStock = totalStock === 0;
-    const lowStock = !outOfStock && minStockSum > 0 && totalStock <= minStockSum;
-    groups.push({ product, items: groupItems, totalStock, brandCount, minStockSum, outOfStock, lowStock });
+    const outOfStock = isConsumable && totalStock === 0;
+    const lowStock = isConsumable && !outOfStock && minStockSum > 0 && totalStock <= minStockSum;
+    groups.push({
+      product,
+      items: groupItems,
+      totalStock,
+      brandCount,
+      minStockSum,
+      outOfStock,
+      lowStock,
+      isConsumable,
+    });
   }
   groups.sort((a, b) => a.product.localeCompare(b.product));
   return groups;
@@ -61,6 +76,7 @@ export function InventoryView({ items, loading, error, onAdjust, onDelete, onEdi
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
+  const statsMap = useAllConsumptionStats(items);
   const q = query.trim().toLowerCase();
 
   const allGroups = useMemo(() => groupByProduct(items), [items]);
@@ -70,9 +86,8 @@ export function InventoryView({ items, loading, error, onAdjust, onDelete, onEdi
     return allGroups.filter((g) => groupMatches(g, q));
   }, [allGroups, q]);
 
-  // Groups that should render expanded: user-toggled ones, plus any matching
-  // groups while a search is active.
-  const isOpen = (product: string) => (q ? groupMatches(allGroups.find((g) => g.product === product)!, q) : expanded.has(product));
+  const isOpen = (product: string) =>
+    q ? groupMatches(allGroups.find((g) => g.product === product)!, q) : expanded.has(product);
 
   const toggleGroup = (product: string) => {
     setExpanded((prev) => {
@@ -117,7 +132,9 @@ export function InventoryView({ items, loading, error, onAdjust, onDelete, onEdi
       <div className="flex flex-col items-center justify-center py-24 text-neutral-500 px-6 text-center">
         <PackageSearch className="h-12 w-12 mb-4 text-neutral-700" />
         <p className="text-neutral-300 font-medium text-base">Your storage is empty</p>
-        <p className="text-sm mt-1.5 text-neutral-500">Add products to track what you have at home and get a shopping list automatically.</p>
+        <p className="text-sm mt-1.5 text-neutral-500">
+          Add products to track what you have at home and get a shopping list automatically.
+        </p>
         {onAdd && (
           <button onClick={onAdd} className="mt-5 btn-primary inline-flex items-center gap-1.5">
             <Plus className="h-4 w-4" /> Add product
@@ -159,6 +176,7 @@ export function InventoryView({ items, loading, error, onAdjust, onDelete, onEdi
                   item={group.items[0]}
                   query={q}
                   busy={busyId === group.items[0].id}
+                  avgDuration={statsMap.get(group.items[0].id)?.averageDays}
                   onAdjust={handleAdjust}
                   onEdit={onEdit}
                   onDelete={(item) => setPendingDelete(item)}
@@ -171,6 +189,7 @@ export function InventoryView({ items, loading, error, onAdjust, onDelete, onEdi
                   open={isOpen(group.product)}
                   onToggle={() => toggleGroup(group.product)}
                   busyId={busyId}
+                  statsMap={statsMap}
                   onAdjust={handleAdjust}
                   onEdit={onEdit}
                   onDelete={(item) => setPendingDelete(item)}
@@ -186,7 +205,7 @@ export function InventoryView({ items, loading, error, onAdjust, onDelete, onEdi
           <div className="w-full max-w-sm bg-neutral-900 border border-neutral-800 rounded-3xl p-5 shadow-2xl">
             <h3 className="text-white font-semibold text-lg">Delete product?</h3>
             <p className="text-sm text-neutral-400 mt-1">
-              This removes <span className="text-white">{pendingDelete.brand ?? pendingDelete.product}</span> and its restock
+              This removes <span className="text-white">{pendingDelete.brand ?? pendingDelete.product}</span> and its restock &amp; consumption
               history. This cannot be undone.
             </p>
             <div className="flex gap-2 mt-5">
@@ -261,6 +280,7 @@ function SingleItemCard({
   item,
   query,
   busy,
+  avgDuration,
   onAdjust,
   onEdit,
   onDelete,
@@ -268,16 +288,19 @@ function SingleItemCard({
   item: InventoryItem;
   query: string;
   busy: boolean;
+  avgDuration?: number | null;
   onAdjust: (e: React.MouseEvent, id: string, delta: number) => Promise<void>;
   onEdit: (item: InventoryItem) => void;
   onDelete: (item: InventoryItem) => void;
 }) {
-  const out = item.count === 0;
-  const low = !out && item.min_stock > 0 && item.count <= item.min_stock;
+  const isConsumable = item.consumable !== false;
+  const out = isConsumable && item.count === 0;
+  const low = isConsumable && !out && item.min_stock > 0 && item.count <= item.min_stock;
   const modeIcon =
     item.tracking_mode === 'units' ? <Layers className="h-3.5 w-3.5" /> : <Package className="h-3.5 w-3.5" />;
   const brandVariant = [item.brand, item.variant].filter(Boolean).join(' • ');
-  const hasMeta = item.min_stock > 0 || out || low || Boolean(formatDateOnly(item.opened_at));
+  const hasMeta =
+    (isConsumable && (item.min_stock > 0 || out || low || Boolean(formatDateOnly(item.opened_at)) || Boolean(avgDuration)));
 
   return (
     <li className="bg-neutral-900/70 border border-neutral-800 rounded-xl overflow-hidden">
@@ -312,27 +335,35 @@ function SingleItemCard({
         </div>
 
         {/* Meta row */}
-        <div className={`flex items-center gap-1.5 flex-wrap ${hasMeta ? 'mt-1.5' : ''}`}>
-          <span className="text-neutral-600" title={TRACKING_MODE_SHORT[item.tracking_mode]}>
-            {modeIcon}
-          </span>
-          {item.min_stock > 0 && (
-            <span className="text-[11px] text-neutral-600">Min {item.min_stock}</span>
-          )}
-          {out && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-red-400/80 px-1 py-0.5 rounded bg-red-950/40">
-              Out of stock
+        {isConsumable && (
+          <div className={`flex items-center gap-1.5 flex-wrap ${hasMeta ? 'mt-1.5' : ''}`}>
+            <span className="text-neutral-600" title={TRACKING_MODE_SHORT[item.tracking_mode]}>
+              {modeIcon}
             </span>
-          )}
-          {!out && low && (
-            <span className="text-[9px] font-semibold uppercase tracking-wide text-amber-400/80 px-1 py-0.5 rounded bg-amber-950/40">
-              Low stock
-            </span>
-          )}
-          {formatDateOnly(item.opened_at) && (
-            <span className="text-[11px] text-neutral-600">Opened {formatDateOnly(item.opened_at)}</span>
-          )}
-        </div>
+            {item.min_stock > 0 && (
+              <span className="text-[11px] text-neutral-600">Min {item.min_stock}</span>
+            )}
+            {out && (
+              <span className="text-[9px] font-semibold uppercase tracking-wide text-red-400/80 px-1 py-0.5 rounded bg-red-950/40">
+                Out of stock
+              </span>
+            )}
+            {!out && low && (
+              <span className="text-[9px] font-semibold uppercase tracking-wide text-amber-400/80 px-1 py-0.5 rounded bg-amber-950/40">
+                Low stock
+              </span>
+            )}
+            {formatDateOnly(item.opened_at) && (
+              <span className="text-[11px] text-neutral-600">Opened {formatDateOnly(item.opened_at)}</span>
+            )}
+            {avgDuration !== undefined && avgDuration !== null && (
+              <span className="text-[11px] font-medium text-emerald-400 flex items-center gap-0.5">
+                <Clock className="h-3 w-3 text-emerald-500" />
+                Avg {formatConsumptionDuration(avgDuration)}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Quick actions */}
@@ -374,6 +405,7 @@ function ProductGroupCard({
   open,
   onToggle,
   busyId,
+  statsMap,
   onAdjust,
   onEdit,
   onDelete,
@@ -383,6 +415,7 @@ function ProductGroupCard({
   open: boolean;
   onToggle: () => void;
   busyId: string | null;
+  statsMap: Map<string, { averageDays: number | null }>;
   onAdjust: (e: React.MouseEvent, id: string, delta: number) => Promise<void>;
   onEdit: (item: InventoryItem) => void;
   onDelete: (item: InventoryItem) => void;
@@ -444,6 +477,7 @@ function ProductGroupCard({
               item={it}
               query={query}
               busy={busyId === it.id}
+              avgDuration={statsMap.get(it.id)?.averageDays}
               onAdjust={onAdjust}
               onEdit={onEdit}
               onDelete={onDelete}
@@ -459,6 +493,7 @@ function GroupRow({
   item,
   query,
   busy,
+  avgDuration,
   onAdjust,
   onEdit,
   onDelete,
@@ -466,16 +501,20 @@ function GroupRow({
   item: InventoryItem;
   query: string;
   busy: boolean;
+  avgDuration?: number | null;
   onAdjust: (e: React.MouseEvent, id: string, delta: number) => Promise<void>;
   onEdit: (item: InventoryItem) => void;
   onDelete: (item: InventoryItem) => void;
 }) {
-  const out = item.count === 0;
-  const low = !out && item.min_stock > 0 && item.count <= item.min_stock;
+  const isConsumable = item.consumable !== false;
+  const out = isConsumable && item.count === 0;
+  const low = isConsumable && !out && item.min_stock > 0 && item.count <= item.min_stock;
   const modeIcon =
     item.tracking_mode === 'units' ? <Layers className="h-3.5 w-3.5" /> : <Package className="h-3.5 w-3.5" />;
   const brandVariant = [item.brand, item.variant].filter(Boolean).join(' • ');
-  const hasMeta = Boolean(brandVariant) || item.min_stock > 0 || out || low || Boolean(formatDateOnly(item.opened_at));
+  const hasMeta =
+    Boolean(brandVariant) ||
+    (isConsumable && (item.min_stock > 0 || out || low || Boolean(formatDateOnly(item.opened_at)) || Boolean(avgDuration)));
 
   return (
     <div
@@ -508,27 +547,35 @@ function GroupRow({
       </div>
 
       {/* Meta row: subtle mode icon + min stock + status */}
-      <div className={`flex items-center gap-1.5 flex-wrap ${hasMeta ? 'mt-1' : ''}`}>
-        <span className="text-neutral-600" title={TRACKING_MODE_SHORT[item.tracking_mode]}>
-          {modeIcon}
-        </span>
-        {item.min_stock > 0 && (
-          <span className="text-[11px] text-neutral-600">Min {item.min_stock}</span>
-        )}
-        {out && (
-          <span className="text-[9px] font-semibold uppercase tracking-wide text-red-400/80 px-1 py-0.5 rounded bg-red-950/40">
-            Out of stock
+      {isConsumable && (
+        <div className={`flex items-center gap-1.5 flex-wrap ${hasMeta ? 'mt-1' : ''}`}>
+          <span className="text-neutral-600" title={TRACKING_MODE_SHORT[item.tracking_mode]}>
+            {modeIcon}
           </span>
-        )}
-        {!out && low && (
-          <span className="text-[9px] font-semibold uppercase tracking-wide text-amber-400/80 px-1 py-0.5 rounded bg-amber-950/40">
-            Low stock
-          </span>
-        )}
-        {formatDateOnly(item.opened_at) && (
-          <span className="text-[11px] text-neutral-600">Opened {formatDateOnly(item.opened_at)}</span>
-        )}
-      </div>
+          {item.min_stock > 0 && (
+            <span className="text-[11px] text-neutral-600">Min {item.min_stock}</span>
+          )}
+          {out && (
+            <span className="text-[9px] font-semibold uppercase tracking-wide text-red-400/80 px-1 py-0.5 rounded bg-red-950/40">
+              Out of stock
+            </span>
+          )}
+          {!out && low && (
+            <span className="text-[9px] font-semibold uppercase tracking-wide text-amber-400/80 px-1 py-0.5 rounded bg-amber-950/40">
+              Low stock
+            </span>
+          )}
+          {formatDateOnly(item.opened_at) && (
+            <span className="text-[11px] text-neutral-600">Opened {formatDateOnly(item.opened_at)}</span>
+          )}
+          {avgDuration !== undefined && avgDuration !== null && (
+            <span className="text-[11px] font-medium text-emerald-400 flex items-center gap-0.5">
+              <Clock className="h-3 w-3 text-emerald-500" />
+              Avg {formatConsumptionDuration(avgDuration)}
+            </span>
+          )}
+        </div>
+      )}
 
       {/* Controls */}
       <div

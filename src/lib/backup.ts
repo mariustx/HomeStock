@@ -1,48 +1,47 @@
 import { db } from '../db';
-import type { InventoryItem, RestockEntry, ShoppingItem, PriceBasis } from '../types';
+import type { InventoryItem, RestockEntry, ShoppingItem, ConsumptionEntry, PriceBasis } from '../types';
 import { isValidPriceBasis } from '../types';
 
 // ─── Backup format ───────────────────────────────────────────────────────────
 
 export const BACKUP_FORMAT = 'homestock-backup' as const;
-export const BACKUP_VERSION = 1 as const;
+export const BACKUP_VERSION = 2 as const;
 
 export interface BackupTables {
   inventory: InventoryItem[];
   restock_history: RestockEntry[];
   shopping_items: ShoppingItem[];
+  consumption_history?: ConsumptionEntry[];
 }
 
 export interface BackupFile {
   format: typeof BACKUP_FORMAT;
-  version: typeof BACKUP_VERSION;
+  version: number;
   created_at: string;
-  tables: BackupTables;
+  tables: {
+    inventory: InventoryItem[];
+    restock_history: RestockEntry[];
+    shopping_items: ShoppingItem[];
+    consumption_history: ConsumptionEntry[];
+  };
 }
 
 // ─── Export ──────────────────────────────────────────────────────────────────
 
 /**
- * Reads all three Dexie tables, serialises them into a HomeStock backup JSON
- * file, then attempts to share it via the Web Share API (Android/PWA).
- *
- * Share flow:
- *   1. Build a `File` object with MIME type `application/json`.
- *   2. Check `navigator.canShare({ files: [file] })` — if true, call
- *      `navigator.share({ files, title, text })` which surfaces the native
- *      Android share sheet (Files, Drive, WhatsApp, etc.).
- *   3. If sharing is unsupported or `canShare` returns false, fall back to a
- *      programmatic `<a download>` click so the browser saves it locally.
+ * Reads all Dexie tables (including consumption_history), serialises them into
+ * a HomeStock backup JSON file, then attempts to share it via the Web Share API (Android/PWA).
  */
 export async function exportBackup(): Promise<void> {
-  const [inventory, restock_history, shopping_items] = await db.transaction(
+  const [inventory, restock_history, shopping_items, consumption_history] = await db.transaction(
     'r',
-    [db.inventory, db.restock_history, db.shopping_items],
+    [db.inventory, db.restock_history, db.shopping_items, db.consumption_history],
     async () =>
       Promise.all([
         db.inventory.toArray(),
         db.restock_history.toArray(),
         db.shopping_items.toArray(),
+        db.consumption_history.toArray(),
       ]),
   );
 
@@ -50,7 +49,7 @@ export async function exportBackup(): Promise<void> {
     format: BACKUP_FORMAT,
     version: BACKUP_VERSION,
     created_at: new Date().toISOString(),
-    tables: { inventory, restock_history, shopping_items },
+    tables: { inventory, restock_history, shopping_items, consumption_history },
   };
 
   const json = JSON.stringify(backup, null, 2);
@@ -58,12 +57,8 @@ export async function exportBackup(): Promise<void> {
   const timeStr = new Date().toISOString().split('T')[1].split('.')[0].replace(':', '-'); // HH-MM-SS
   const filename = `HomeStock-backup-${dateStr}-${timeStr}.json`;
 
-  // Build a proper File with the correct MIME type so the share sheet and
-  // file manager both recognise it as a JSON document.
   const file = new File([json], filename, { type: 'application/json' });
 
-  // Prefer the Web Share API with files (supported on Android Chrome / Safari
-  // on iOS 15+). Guard with canShare({ files }) before calling share().
   const shareApi = navigator as Navigator & {
     share?: (data: ShareData) => Promise<void>;
     canShare?: (data: ShareData) => boolean;
@@ -83,14 +78,11 @@ export async function exportBackup(): Promise<void> {
       return;
     } catch (e) {
       if (e instanceof Error) {
-        // User dismissed the share sheet — treat as a silent cancellation.
         if (e.name === 'AbortError') return;
-        // NotAllowedError = browser dropped the user-gesture token across the
-        // async DB read. Fall through to the <a download> fallback silently.
         if (e.name === 'NotAllowedError') {
-          /* fall through */
+          /* fall through to browser download fallback */
         } else {
-          throw e; // Re-throw any unexpected error.
+          throw e;
         }
       } else {
         throw e;
@@ -109,7 +101,6 @@ export async function exportBackup(): Promise<void> {
     a.click();
     document.body.removeChild(a);
   } finally {
-    // Revoke the object URL after a short delay to allow the download to start.
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 }
@@ -144,34 +135,18 @@ function isNullableOrUndefinedString(v: unknown): v is string | null | undefined
   return v === undefined || v === null || typeof v === 'string';
 }
 
-/**
- * Migrate an old comparison_unit value to a price_basis.
- *
- * Safe migrations (unit already represents the normalized target):
- *   kg   → 'kg'
- *   L    → 'L'
- *   piece → 'piece'
- *
- * Unsafe migrations — the new model stores the price as-is, so we must NOT
- * reinterpret old g/ml records to avoid changing their historical meaning:
- *   g    → no price_basis (left undefined)
- *   ml   → no price_basis (left undefined)
- */
 function migrateLegacyComparisonUnit(
   comparisonUnit: string | null | undefined,
   existingPriceBasis: unknown,
 ): PriceBasis | null | undefined {
-  // If the record already has a valid price_basis, keep it.
   if (isValidPriceBasis(existingPriceBasis)) return existingPriceBasis;
   if (existingPriceBasis === null) return null;
 
-  // Attempt migration from old comparison_unit.
   if (!comparisonUnit) return undefined;
   const u = comparisonUnit.trim().toLowerCase();
   if (u === 'kg') return 'kg';
   if (u === 'l') return 'L';
   if (u === 'piece' || u === 'pieces') return 'piece';
-  // g, ml and any unknown unit: leave undefined (no basis assigned).
   return undefined;
 }
 
@@ -199,17 +174,19 @@ function validateInventoryItem(item: unknown, index: number): InventoryItem {
   if (typeof it.is_on_manual_list !== 'boolean') throw new Error(`inventory[${index}].is_on_manual_list must be a boolean`);
   if (!isNullableString(it.opened_at)) throw new Error(`inventory[${index}].opened_at must be string|null`);
   if (!isBooleanOrUndefined(it.restock_enabled)) throw new Error(`inventory[${index}].restock_enabled must be a boolean or undefined`);
-  // price_basis: accept new field if present and valid, otherwise try to migrate from legacy comparison_unit.
+  if (!isBooleanOrUndefined(it.consumable)) throw new Error(`inventory[${index}].consumable must be a boolean or undefined`);
   if (it.price_basis !== undefined && it.price_basis !== null && !isValidPriceBasis(it.price_basis)) {
     throw new Error(`inventory[${index}].price_basis must be "kg", "L", "piece", "package", or null/undefined`);
   }
-  // Accept legacy fields for backward compatibility (old backups may have them).
   if (!isNullableOrUndefinedNumber(it.comparison_quantity)) throw new Error(`inventory[${index}].comparison_quantity must be number|null|undefined`);
   if (!isNullableOrUndefinedString(it.comparison_unit)) throw new Error(`inventory[${index}].comparison_unit must be string|null|undefined`);
   if (!isString(it.created_at)) throw new Error(`inventory[${index}].created_at must be a string`);
 
-  // Build the validated record and apply migration if needed.
   const record = it as unknown as InventoryItem;
+  // Default consumable to true for backwards compatibility with older backups
+  if (record.consumable === undefined) {
+    record.consumable = true;
+  }
   const migratedBasis = migrateLegacyComparisonUnit(record.comparison_unit, record.price_basis);
   if (migratedBasis !== undefined) {
     record.price_basis = migratedBasis;
@@ -239,15 +216,12 @@ function validateRestockEntry(item: unknown, index: number): RestockEntry {
   }
   if (!isNullableString(it.store)) throw new Error(`restock_history[${index}].store must be string|null`);
   if (!isNullableString(it.notes)) throw new Error(`restock_history[${index}].notes must be string|null`);
-  // price_basis: accept new field if present and valid.
   if (it.price_basis !== undefined && it.price_basis !== null && !isValidPriceBasis(it.price_basis)) {
     throw new Error(`restock_history[${index}].price_basis must be "kg", "L", "piece", "package", or null/undefined`);
   }
-  // Accept legacy fields for backward compatibility.
   if (!isNullableOrUndefinedNumber(it.comparison_quantity)) throw new Error(`restock_history[${index}].comparison_quantity must be number|null|undefined`);
   if (!isNullableOrUndefinedString(it.comparison_unit)) throw new Error(`restock_history[${index}].comparison_unit must be string|null|undefined`);
 
-  // Build the validated record and apply migration if needed.
   const record = it as unknown as RestockEntry;
   const migratedBasis = migrateLegacyComparisonUnit(record.comparison_unit, record.price_basis);
   if (migratedBasis !== undefined) {
@@ -255,6 +229,27 @@ function validateRestockEntry(item: unknown, index: number): RestockEntry {
   }
 
   return record;
+}
+
+function validateConsumptionEntry(item: unknown, index: number): ConsumptionEntry {
+  if (typeof item !== 'object' || item === null) {
+    throw new Error(`consumption_history[${index}] is not an object`);
+  }
+  const it = item as Record<string, unknown>;
+
+  if (!isString(it.id)) throw new Error(`consumption_history[${index}].id must be a string`);
+  if (!isString(it.inventory_id)) throw new Error(`consumption_history[${index}].inventory_id must be a string`);
+  if (!isString(it.opened_at)) throw new Error(`consumption_history[${index}].opened_at must be a string`);
+  if (!isNullableOrUndefinedString(it.notes)) throw new Error(`consumption_history[${index}].notes must be string|null|undefined`);
+  if (!isString(it.created_at)) throw new Error(`consumption_history[${index}].created_at must be a string`);
+
+  return {
+    id: it.id,
+    inventory_id: it.inventory_id,
+    opened_at: it.opened_at,
+    notes: it.notes ? String(it.notes) : null,
+    created_at: it.created_at,
+  };
 }
 
 function validateShoppingItem(item: unknown, index: number): ShoppingItem {
@@ -282,10 +277,9 @@ function validateShoppingItem(item: unknown, index: number): ShoppingItem {
  * tables, or has an incompatible format/version.
  *
  * Backward compatibility:
- *   - Backups without comparison fields → imported as-is
- *   - Backups with comparison_quantity / comparison_unit → imported and
- *     safely migrated: kg/L/piece → price_basis; g/ml → no price_basis
- *   - Backups already using price_basis → imported as-is
+ *   - Backups without consumable flag -> default to true
+ *   - Backups without consumption_history (v1 backups) -> default to empty array
+ *   - Backups with comparison_quantity / comparison_unit -> safely migrated
  */
 export async function importBackup(file: File): Promise<BackupFile> {
   let raw: unknown;
@@ -308,9 +302,9 @@ export async function importBackup(file: File): Promise<BackupFile> {
     );
   }
 
-  if (obj.version !== BACKUP_VERSION) {
+  if (obj.version !== 1 && obj.version !== 2) {
     throw new Error(
-      `Incompatible backup version (expected ${BACKUP_VERSION}, got ${String(obj.version)}). Please use the current version of HomeStock to restore this file.`,
+      `Incompatible backup version (got ${String(obj.version)}). Please use a compatible version of HomeStock to restore this file.`,
     );
   }
 
@@ -334,29 +328,42 @@ export async function importBackup(file: File): Promise<BackupFile> {
   const restock_history = (tables.restock_history as unknown[]).map(validateRestockEntry);
   const shopping_items = (tables.shopping_items as unknown[]).map(validateShoppingItem);
 
+  const consumption_history = Array.isArray(tables.consumption_history)
+    ? (tables.consumption_history as unknown[]).map(validateConsumptionEntry)
+    : [];
+
   return {
     format: BACKUP_FORMAT,
-    version: BACKUP_VERSION,
+    version: typeof obj.version === 'number' ? obj.version : BACKUP_VERSION,
     created_at: obj.created_at as string,
-    tables: { inventory, restock_history, shopping_items },
+    tables: { inventory, restock_history, shopping_items, consumption_history },
   };
 }
 
 // ─── Restore ─────────────────────────────────────────────────────────────────
 
 /**
- * Atomically replaces all three Dexie tables with the contents of `backup`.
+ * Atomically replaces all Dexie tables with the contents of `backup`.
  * If any step fails the entire transaction rolls back, leaving existing data
  * intact. Only call this after `importBackup` has already validated the file.
  */
 export async function restoreBackup(backup: BackupFile): Promise<void> {
-  await db.transaction('rw', [db.inventory, db.restock_history, db.shopping_items], async () => {
-    await db.inventory.clear();
-    await db.restock_history.clear();
-    await db.shopping_items.clear();
+  await db.transaction(
+    'rw',
+    [db.inventory, db.restock_history, db.shopping_items, db.consumption_history],
+    async () => {
+      await db.inventory.clear();
+      await db.restock_history.clear();
+      await db.shopping_items.clear();
+      await db.consumption_history.clear();
 
-    await db.inventory.bulkAdd(backup.tables.inventory);
-    await db.restock_history.bulkAdd(backup.tables.restock_history);
-    await db.shopping_items.bulkAdd(backup.tables.shopping_items);
-  });
+      await db.inventory.bulkAdd(backup.tables.inventory);
+      await db.restock_history.bulkAdd(backup.tables.restock_history);
+      await db.shopping_items.bulkAdd(backup.tables.shopping_items);
+
+      if (backup.tables.consumption_history && backup.tables.consumption_history.length > 0) {
+        await db.consumption_history.bulkAdd(backup.tables.consumption_history);
+      }
+    },
+  );
 }

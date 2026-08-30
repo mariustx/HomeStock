@@ -191,7 +191,7 @@ export function BackupSection() {
             <span className="font-semibold">Replace current data?</span>
             <br />
             Importing this backup will permanently overwrite your current inventory, shopping list,
-            and restock history with the data from{' '}
+            restock history, and consumption history with the data from{' '}
             <span className="font-medium">
               {formatTs(status.backup.created_at) ?? status.backup.created_at}
             </span>

@@ -240,7 +240,7 @@ export function MoreMenu() {
             <div className="mx-3 mb-1 rounded-xl border border-amber-800/60 bg-amber-950/30 p-3 space-y-2.5">
               <p className="text-xs text-amber-300 leading-relaxed">
                 <span className="font-semibold">Replace current data?</span>{' '}
-                Your inventory, shopping list, and restock history will be replaced with the
+                Your inventory, shopping list, restock history, and consumption history will be replaced with the
                 backup from{' '}
                 <span className="font-medium">
                   {fmtTs(status.backup.created_at) ?? status.backup.created_at}

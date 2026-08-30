@@ -11,6 +11,7 @@ import {
   formatPriceWithBasis,
 } from './types';
 import { PriceInput, DateInput, StoreInput } from './components/PurchaseFields';
+import { ConsumptionHistoryEditor } from './components/ConsumptionHistoryEditor';
 import {
   emptyPurchaseState,
   parsePurchase,
@@ -43,6 +44,7 @@ interface ProductFormState {
   notes: string;
   openedAt: string;
   restock_enabled: boolean;
+  consumable: boolean;
   price_basis: PriceBasis | '';
   purchase: PurchaseState;
 }
@@ -61,6 +63,7 @@ const DEFAULTS: ProductFormState = {
   notes: '',
   openedAt: '',
   restock_enabled: true,
+  consumable: true,
   price_basis: '',
   purchase: { price: '', date: todayISO(), store: '' },
 };
@@ -135,7 +138,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
           brand: itemToEdit.brand ?? '',
           variant: itemToEdit.variant ?? '',
           specification: itemToEdit.specification ?? '',
-          unit: itemToEdit.unit,
+          unit: itemToEdit.unit || 'Piece',
           tracking_mode: itemToEdit.tracking_mode ?? 'packages',
           purchase_package: itemToEdit.purchase_package ?? '',
           units_per_package: String(itemToEdit.units_per_package ?? 1),
@@ -144,6 +147,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
           notes: itemToEdit.notes ?? '',
           openedAt: timestamptzToDateInput(itemToEdit.opened_at),
           restock_enabled: itemToEdit.restock_enabled !== false,
+          consumable: itemToEdit.consumable !== false,
           price_basis: (itemToEdit.price_basis as PriceBasis | undefined) ?? '',
           purchase: { price: '', date: todayISO(), store: '' },
         };
@@ -193,6 +197,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
           next.tracking_mode = match.tracking_mode ?? 'packages';
           next.purchase_package = match.purchase_package ?? '';
           next.units_per_package = String(match.units_per_package ?? 1);
+          next.consumable = match.consumable !== false;
           if (match.price_basis) {
             next.price_basis = match.price_basis;
           }
@@ -230,30 +235,39 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
   };
 
   const productValid = form.product.trim().length > 0;
-  const unitValid = form.unit.trim().length > 0;
+  const unitValid = !form.consumable || form.unit.trim().length > 0;
   const purchaseErr = validatePurchase(form.purchase);
   const formValid = productValid && unitValid && !purchaseErr;
 
   const productInvalid = touched.product && !productValid;
-  const unitInvalid = touched.unit && !unitValid;
+  const unitInvalid = touched.unit && form.consumable && !unitValid;
 
   const isDirty = !formsEqual(form, initialForm);
 
   const configuredCount = (() => {
     let n = 0;
-    if (form.tracking_mode !== 'packages') n++;
-    if (form.count !== '0') n++;
-    if (form.min_stock !== '0') n++;
-    if (form.variant.trim() !== '') n++;
-    if (form.specification.trim() !== '') n++;
-    if (form.unit.trim().toLowerCase() !== 'piece') n++;
-    if (form.purchase_package.trim() !== '') n++;
-    if (form.units_per_package !== '1') n++;
-    if (form.notes.trim() !== '') n++;
-    if (!isPurchaseEmpty(form.purchase)) n++;
-    if (form.openedAt.trim() !== '') n++;
-    if (!form.restock_enabled) n++;
-    if (form.price_basis !== '') n++;
+    if (form.consumable) {
+      if (form.tracking_mode !== 'packages') n++;
+      if (form.count !== '0') n++;
+      if (form.min_stock !== '0') n++;
+      if (form.variant.trim() !== '') n++;
+      if (form.specification.trim() !== '') n++;
+      if (form.unit.trim().toLowerCase() !== 'piece') n++;
+      if (form.purchase_package.trim() !== '') n++;
+      if (form.units_per_package !== '1') n++;
+      if (form.notes.trim() !== '') n++;
+      if (!isPurchaseEmpty(form.purchase)) n++;
+      if (form.openedAt.trim() !== '') n++;
+      if (!form.restock_enabled) n++;
+      if (form.price_basis !== '') n++;
+    } else {
+      if (form.count !== '0') n++;
+      if (form.variant.trim() !== '') n++;
+      if (form.specification.trim() !== '') n++;
+      if (form.notes.trim() !== '') n++;
+      if (!isPurchaseEmpty(form.purchase)) n++;
+      if (form.price_basis !== '') n++;
+    }
     return n;
   })();
 
@@ -276,16 +290,17 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
     e.preventDefault();
     if (!formValid) {
       setTouched({ product: true, unit: true });
-      if (!unitValid) setShowMore(true);
+      if (!unitValid && form.consumable) setShowMore(true);
       return;
     }
+
     const count = parseInt(form.count, 10);
-    const minStock = parseInt(form.min_stock, 10);
-    const unitsPerPackage = parseInt(form.units_per_package, 10);
+    const minStock = form.consumable ? parseInt(form.min_stock, 10) : 0;
+    const unitsPerPackage = form.consumable ? parseInt(form.units_per_package, 10) : 1;
+
     if (
       Number.isNaN(count) || count < 0 ||
-      Number.isNaN(minStock) || minStock < 0 ||
-      Number.isNaN(unitsPerPackage) || unitsPerPackage < 1
+      (form.consumable && (Number.isNaN(minStock) || minStock < 0 || Number.isNaN(unitsPerPackage) || unitsPerPackage < 1))
     ) {
       setErr('Please check the numeric values in More options.');
       setShowMore(true);
@@ -301,15 +316,16 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
         brand: form.brand || null,
         variant: form.variant || null,
         specification: form.specification || null,
-        unit: form.unit.trim(),
+        unit: form.unit.trim() || 'Piece',
         tracking_mode: form.tracking_mode,
         purchase_package: form.purchase_package || null,
         units_per_package: unitsPerPackage,
         count,
         min_stock: minStock,
         notes: form.notes || null,
-        openedAt: dateInputToTimestamptz(form.openedAt),
-        restock_enabled: form.restock_enabled,
+        openedAt: form.consumable ? dateInputToTimestamptz(form.openedAt) : null,
+        restock_enabled: form.consumable ? form.restock_enabled : false,
+        consumable: form.consumable,
         price_basis: form.price_basis || null,
         price: parsed.price,
         purchaseDate: parsed.date,
@@ -380,7 +396,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                     value={form.product}
                     onChange={(e) => onProductInputChange(e.target.value)}
                     onBlur={() => markTouched('product')}
-                    placeholder="e.g. Facial cleanser"
+                    placeholder="e.g. Facial cleanser, Sony headphones"
                     enterKeyHint="next"
                     autoCapitalize="words"
                     autoComplete="off"
@@ -409,7 +425,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                 <input
                   value={form.brand}
                   onChange={(e) => setForm({ ...form, brand: e.target.value })}
-                  placeholder="e.g. Garnier"
+                  placeholder="e.g. Garnier, Sony"
                   enterKeyHint="done"
                   autoCapitalize="words"
                   autoComplete="off"
@@ -417,7 +433,48 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                 />
               </Field>
 
-              {/* Price — third visible field */}
+              {/* Consumable Toggle */}
+              <div className="block">
+                <span className="block text-xs font-medium text-neutral-400 mb-1">
+                  Product type
+                </span>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, consumable: true }))}
+                    className={`rounded-xl border p-2.5 text-left transition active:scale-[0.97] ${
+                      form.consumable
+                        ? 'border-emerald-500 bg-emerald-600/15'
+                        : 'border-neutral-700 bg-neutral-800/50 hover:border-neutral-600'
+                    }`}
+                  >
+                    <div className={`text-sm font-medium ${form.consumable ? 'text-emerald-300' : 'text-white'}`}>
+                      Consumable
+                    </div>
+                    <div className="text-xs text-neutral-500 mt-0.5">
+                      Gets used up (shampoo, food, etc.)
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setForm((prev) => ({ ...prev, consumable: false }))}
+                    className={`rounded-xl border p-2.5 text-left transition active:scale-[0.97] ${
+                      !form.consumable
+                        ? 'border-emerald-500 bg-emerald-600/15'
+                        : 'border-neutral-700 bg-neutral-800/50 hover:border-neutral-600'
+                    }`}
+                  >
+                    <div className={`text-sm font-medium ${!form.consumable ? 'text-emerald-300' : 'text-white'}`}>
+                      Non-consumable
+                    </div>
+                    <div className="text-xs text-neutral-500 mt-0.5">
+                      Durable (TV, headphones, tools)
+                    </div>
+                  </button>
+                </div>
+              </div>
+
+              {/* Price — visible field */}
               <PriceInput
                 value={form.purchase.price}
                 onChange={(v) => setP({ price: v })}
@@ -456,22 +513,33 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
               {/* More options content */}
               {showMore && (
                 <div className="space-y-3 animate-[fadeIn_150ms_ease-out]">
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Current stock">
+                  {/* Stock fields */}
+                  {form.consumable ? (
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="Current stock">
+                        <StepperInput
+                          value={form.count}
+                          onChange={(v) => setForm({ ...form, count: v })}
+                          min={0}
+                        />
+                      </Field>
+                      <Field label="Minimum stock">
+                        <StepperInput
+                          value={form.min_stock}
+                          onChange={(v) => setForm({ ...form, min_stock: v })}
+                          min={0}
+                        />
+                      </Field>
+                    </div>
+                  ) : (
+                    <Field label="Current quantity" hint="(number you own)">
                       <StepperInput
                         value={form.count}
                         onChange={(v) => setForm({ ...form, count: v })}
                         min={0}
                       />
                     </Field>
-                    <Field label="Minimum stock">
-                      <StepperInput
-                        value={form.min_stock}
-                        onChange={(v) => setForm({ ...form, min_stock: v })}
-                        min={0}
-                      />
-                    </Field>
-                  </div>
+                  )}
 
                   {/* Purchase date + Store (shared with restock) */}
                   <DateInput
@@ -522,7 +590,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                     <input
                       value={form.variant}
                       onChange={(e) => setForm({ ...form, variant: e.target.value })}
-                      placeholder="e.g. Sensitive"
+                      placeholder="e.g. Sensitive, Black, 65-inch"
                       enterKeyHint="next"
                       autoCapitalize="words"
                       className="input"
@@ -533,65 +601,68 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                     <input
                       value={form.specification}
                       onChange={(e) => setForm({ ...form, specification: e.target.value })}
-                      placeholder="e.g. 400 mL, 1 L, AA, 3-ply"
+                      placeholder="e.g. 400 mL, 1 L, AA, 3-ply, 4K OLED"
                       list="spec-suggestions"
                       enterKeyHint="next"
                       className="input"
                     />
                   </Field>
 
-                  <Field label="Stock tracking" required>
-                    <div className="grid grid-cols-2 gap-2">
-                      <ModeOption
-                        active={form.tracking_mode === 'packages'}
-                        onClick={() => setForm({ ...form, tracking_mode: 'packages' })}
-                        title="Unopened packages"
-                        desc="Count whole packages"
-                      />
-                      <ModeOption
-                        active={form.tracking_mode === 'units'}
-                        onClick={() => setForm({ ...form, tracking_mode: 'units' })}
-                        title="Individual units"
-                        desc="Count each unit"
-                      />
-                    </div>
-                  </Field>
+                  {/* Consumable-only tracking configuration */}
+                  {form.consumable && (
+                    <>
+                      <Field label="Stock tracking" required>
+                        <div className="grid grid-cols-2 gap-2">
+                          <ModeOption
+                            active={form.tracking_mode === 'packages'}
+                            onClick={() => setForm({ ...form, tracking_mode: 'packages' })}
+                            title="Unopened packages"
+                            desc="Count whole packages"
+                          />
+                          <ModeOption
+                            active={form.tracking_mode === 'units'}
+                            onClick={() => setForm({ ...form, tracking_mode: 'units' })}
+                            title="Individual units"
+                            desc="Count each unit"
+                          />
+                        </div>
+                      </Field>
 
-                  <div className="grid grid-cols-2 gap-3">
-                    <Field label="Stock unit" required error={unitInvalid ? 'Stock unit is required' : undefined}>
-                      <input
-                        value={form.unit}
-                        onChange={(e) => setForm({ ...form, unit: e.target.value })}
-                        onBlur={() => markTouched('unit')}
-                        placeholder="e.g. bottle, roll"
-                        list="stock-unit-suggestions"
-                        enterKeyHint="next"
-                        autoCapitalize="words"
-                        className={inputClass(unitInvalid)}
-                      />
-                    </Field>
-                    <Field label="Purchase package">
-                      <input
-                        value={form.purchase_package}
-                        onChange={(e) => setForm({ ...form, purchase_package: e.target.value })}
-                        placeholder="e.g. Pack, Box"
-                        list="package-suggestions"
-                        enterKeyHint="done"
-                        autoCapitalize="words"
-                        className="input"
-                      />
-                    </Field>
-                  </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <Field label="Stock unit" required error={unitInvalid ? 'Stock unit is required' : undefined}>
+                          <input
+                            value={form.unit}
+                            onChange={(e) => setForm({ ...form, unit: e.target.value })}
+                            onBlur={() => markTouched('unit')}
+                            placeholder="e.g. bottle, roll"
+                            list="stock-unit-suggestions"
+                            enterKeyHint="next"
+                            autoCapitalize="words"
+                            className={inputClass(unitInvalid)}
+                          />
+                        </Field>
+                        <Field label="Purchase package">
+                          <input
+                            value={form.purchase_package}
+                            onChange={(e) => setForm({ ...form, purchase_package: e.target.value })}
+                            placeholder="e.g. Pack, Box"
+                            list="package-suggestions"
+                            enterKeyHint="done"
+                            autoCapitalize="words"
+                            className="input"
+                          />
+                        </Field>
+                      </div>
 
-                  <Field
-                    label="Units per package"
-                  >
-                    <StepperInput
-                      value={form.units_per_package}
-                      onChange={(v) => setForm({ ...form, units_per_package: v })}
-                      min={1}
-                    />
-                  </Field>
+                      <Field label="Units per package">
+                        <StepperInput
+                          value={form.units_per_package}
+                          onChange={(v) => setForm({ ...form, units_per_package: v })}
+                          min={1}
+                        />
+                      </Field>
+                    </>
+                  )}
 
                   <Field label="Notes">
                     <textarea
@@ -603,51 +674,61 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                     />
                   </Field>
 
-                  <Field label="Opened on" hint="Date you first used this item">
-                    <div className="relative">
-                      <input
-                        type="date"
-                        value={form.openedAt}
-                        onChange={(e) => setForm({ ...form, openedAt: e.target.value })}
-                        className="input pr-9"
-                      />
-                      {form.openedAt && (
+                  {/* Consumable-only Opened On and History */}
+                  {form.consumable && (
+                    <>
+                      <Field label="Opened on" hint="Date you first used the current item">
+                        <div className="relative">
+                          <input
+                            type="date"
+                            value={form.openedAt}
+                            onChange={(e) => setForm({ ...form, openedAt: e.target.value })}
+                            className="input pr-9"
+                          />
+                          {form.openedAt && (
+                            <button
+                              type="button"
+                              onClick={() => setForm({ ...form, openedAt: '' })}
+                              className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 grid place-items-center text-neutral-500 hover:text-white rounded-lg transition"
+                              aria-label="Clear opened date"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      </Field>
+
+                      {/* Consumption Statistics & History (if editing existing item) */}
+                      {isEdit && itemToEdit && (
+                        <ConsumptionHistoryEditor inventoryId={itemToEdit.id} />
+                      )}
+
+                      {/* Restock automatically */}
+                      <div className="rounded-xl border border-neutral-800 bg-neutral-800/40 p-3.5 flex items-center justify-between gap-3">
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-medium text-white">Restock automatically</div>
+                          <div className="text-xs text-neutral-500 mt-0.5">
+                            Add to shopping list when stock is low
+                          </div>
+                        </div>
                         <button
                           type="button"
-                          onClick={() => setForm({ ...form, openedAt: '' })}
-                          className="absolute right-2 top-1/2 -translate-y-1/2 h-7 w-7 grid place-items-center text-neutral-500 hover:text-white rounded-lg transition"
-                          aria-label="Clear opened date"
+                          role="switch"
+                          aria-checked={form.restock_enabled}
+                          onClick={() => setForm((prev) => ({ ...prev, restock_enabled: !prev.restock_enabled }))}
+                          className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                            form.restock_enabled ? 'bg-emerald-600' : 'bg-neutral-700'
+                          }`}
                         >
-                          ✕
+                          <span
+                            className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
+                              form.restock_enabled ? 'translate-x-5' : 'translate-x-0'
+                            }`}
+                          />
                         </button>
-                      )}
-                    </div>
-                  </Field>
-
-                  {/* Restock automatically */}
-                  <div className="rounded-xl border border-neutral-800 bg-neutral-800/40 p-3.5 flex items-center justify-between gap-3">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm font-medium text-white">Restock automatically</div>
-                      <div className="text-xs text-neutral-500 mt-0.5">
-                        Add to shopping list when stock is low
                       </div>
-                    </div>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={form.restock_enabled}
-                      onClick={() => setForm((prev) => ({ ...prev, restock_enabled: !prev.restock_enabled }))}
-                      className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                        form.restock_enabled ? 'bg-emerald-600' : 'bg-neutral-700'
-                      }`}
-                    >
-                      <span
-                        className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow-lg ring-0 transition duration-200 ease-in-out ${
-                          form.restock_enabled ? 'translate-x-5' : 'translate-x-0'
-                        }`}
-                      />
-                    </button>
-                  </div>
+                    </>
+                  )}
                 </div>
               )}
 

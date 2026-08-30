@@ -18,6 +18,8 @@ export interface InventoryItem {
   is_on_manual_list: boolean;
   opened_at: string | null;
   restock_enabled?: boolean;
+  /** Whether the product is consumable (gets used up) or a durable non-consumable. Defaults to true. */
+  consumable?: boolean;
   /** Price basis for price-tracking purposes only. Does not affect stock. */
   price_basis?: PriceBasis | null;
   /**
@@ -57,6 +59,28 @@ export interface RestockEntry {
   comparison_unit?: string | null;
 }
 
+export interface ConsumptionEntry {
+  id: string;
+  inventory_id: string;
+  opened_at: string;
+  notes?: string | null;
+  created_at: string;
+}
+
+export interface ConsumptionPeriod {
+  fromOpenedAt: string;
+  toOpenedAt: string;
+  days: number;
+}
+
+export interface ConsumptionStats {
+  openingsCount: number;
+  periodsCount: number;
+  averageDays: number | null;
+  lastDays: number | null;
+  periods: ConsumptionPeriod[];
+}
+
 export interface ShoppingItem {
   id: string;
   product: string;
@@ -81,6 +105,7 @@ export type ProductInput = {
   notes?: string | null;
   openedAt?: string | null;
   restock_enabled?: boolean;
+  consumable?: boolean;
   price_basis?: PriceBasis | null;
   /** Optional price spotted at a store — saved to restock_history without changing stock. */
   price?: number | null;

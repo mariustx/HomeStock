@@ -12,11 +12,11 @@ const InsightsView = lazy(() => import('./InsightsView').then(m => ({ default: m
 
 const TABS: TabKey[] = ['inventory', 'shopping', 'insights'];
 
-/** Count distinct products whose total unopened stock across all restockable rows is zero. */
+/** Count distinct consumable products whose total unopened stock across all restockable rows is zero. */
 function outOfStockProductCount(items: InventoryItem[]): number {
   const totals = new Map<string, number>();
   for (const it of items) {
-    if (it.restock_enabled === false) continue;
+    if (it.restock_enabled === false || it.consumable === false) continue;
     totals.set(it.product, (totals.get(it.product) ?? 0) + it.count);
   }
   let count = 0;
