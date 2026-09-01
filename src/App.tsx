@@ -12,7 +12,7 @@ import { ItemDashboardModal } from './components/item-dashboard/ItemDashboardMod
 
 const InsightsView = lazy(() => import('./InsightsView').then(m => ({ default: m.InsightsView })));
 
-const TABS: TabKey[] = ['inventory', 'shopping', 'insights'];
+const TABS: TabKey[] = ['inventory', 'shopping'];
 
 /** Count distinct consumable products whose total unopened stock across all restockable rows is zero. */
 function outOfStockProductCount(items: InventoryItem[]): number {
@@ -177,7 +177,7 @@ export default function App() {
 
         {/* Top tab bar */}
         <nav className="px-4 pb-2">
-          <div className="grid grid-cols-3 gap-1 bg-neutral-900/80 rounded-xl p-1 border border-neutral-800">
+          <div className="grid grid-cols-2 gap-1 bg-neutral-900/80 rounded-xl p-1 border border-neutral-800">
             <TabPill
               active={tab === 'inventory'}
               onClick={() => setTab('inventory')}
@@ -191,12 +191,6 @@ export default function App() {
               label="Shopping"
               badge={shoppingCount}
             />
-            <TabPill
-              active={tab === 'insights'}
-              onClick={() => setTab('insights')}
-              icon={<BarChart3 className="h-4 w-4" />}
-              label="Insights"
-            />
           </div>
         </nav>
       </header>
@@ -209,7 +203,6 @@ export default function App() {
             loading={loading}
             error={error}
             onAdjust={adjustCount}
-            onDelete={deleteItem}
             onEdit={openItemDashboard}
             onAdd={openAddProduct}
           />
@@ -238,16 +231,14 @@ export default function App() {
         )}
       </main>
 
-      {/* Floating action button — hidden on Insights to avoid covering the chart */}
-      {tab !== 'insights' && (
-        <button
-          onClick={handleFab}
-          className="fixed bottom-6 right-4 sm:right-[calc(50%-13rem)] z-40 h-14 w-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white grid place-items-center shadow-lg shadow-emerald-900/40 active:scale-90 transition"
-          aria-label={tab === 'shopping' ? 'Add shopping item' : 'Add product'}
-        >
-          <Plus className="h-6 w-6" />
-        </button>
-      )}
+      {/* Floating action button */}
+      <button
+        onClick={handleFab}
+        className="fixed bottom-6 right-4 sm:right-[calc(50%-13rem)] z-40 h-14 w-14 rounded-full bg-emerald-600 hover:bg-emerald-500 text-white grid place-items-center shadow-lg shadow-emerald-900/40 active:scale-90 transition"
+        aria-label={tab === 'shopping' ? 'Add shopping item' : 'Add product'}
+      >
+        <Plus className="h-6 w-6" />
+      </button>
 
       <AddItemModal
         open={showAdd || !!editingItem}
@@ -255,6 +246,7 @@ export default function App() {
         existingItems={items}
         onClose={closeProductModal}
         onSave={handleSaveProduct}
+        onDelete={deleteItem}
       />
 
       <ShoppingItemModal

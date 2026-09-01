@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Minus, Plus, Trash2, PackageSearch, Search, X, Package, Layers, ChevronRight, Boxes, Clock } from 'lucide-react';
+import { Minus, Plus, PackageSearch, Search, X, Package, Layers, ChevronRight, Boxes, Clock } from 'lucide-react';
 import { pluralize, TRACKING_MODE_SHORT, formatDateOnly, type InventoryItem } from './types';
 import { useAllConsumptionStats } from './hooks';
 import { formatConsumptionDuration } from './lib/consumption';
@@ -9,7 +9,7 @@ interface InventoryViewProps {
   loading: boolean;
   error: string | null;
   onAdjust: (id: string, delta: number) => Promise<void>;
-  onDelete: (id: string) => Promise<void>;
+  onDelete?: (id: string) => Promise<void>;
   onEdit: (item: InventoryItem) => void;
   onAdd?: () => void;
 }
@@ -70,9 +70,8 @@ function groupMatches(group: ProductGroup, q: string): boolean {
   return group.items.some((it) => rowMatches(it, q));
 }
 
-export function InventoryView({ items, loading, error, onAdjust, onDelete, onEdit, onAdd }: InventoryViewProps) {
+export function InventoryView({ items, loading, error, onAdjust, onEdit, onAdd }: InventoryViewProps) {
   const [busyId, setBusyId] = useState<string | null>(null);
-  const [pendingDelete, setPendingDelete] = useState<InventoryItem | null>(null);
   const [query, setQuery] = useState('');
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -179,7 +178,6 @@ export function InventoryView({ items, loading, error, onAdjust, onDelete, onEdi
                   avgDuration={statsMap.get(group.items[0].id)?.averageDays}
                   onAdjust={handleAdjust}
                   onEdit={onEdit}
-                  onDelete={(item) => setPendingDelete(item)}
                 />
               ) : (
                 <ProductGroupCard
@@ -192,46 +190,12 @@ export function InventoryView({ items, loading, error, onAdjust, onDelete, onEdi
                   statsMap={statsMap}
                   onAdjust={handleAdjust}
                   onEdit={onEdit}
-                  onDelete={(item) => setPendingDelete(item)}
                 />
               ),
             )}
           </ul>
         )}
       </div>
-
-      {pendingDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className="w-full max-w-sm bg-neutral-900 border border-neutral-800 rounded-3xl p-5 shadow-2xl">
-            <h3 className="text-white font-semibold text-lg">Delete product?</h3>
-            <p className="text-sm text-neutral-400 mt-1">
-              This removes <span className="text-white">{pendingDelete.brand ?? pendingDelete.product}</span> and its restock &amp; consumption
-              history. This cannot be undone.
-            </p>
-            <div className="flex gap-2 mt-5">
-              <button onClick={() => setPendingDelete(null)} className="btn-ghost flex-1">
-                Cancel
-              </button>
-              <button
-                onClick={async () => {
-                  setBusyId(pendingDelete.id);
-                  try {
-                    await onDelete(pendingDelete.id);
-                  } catch {
-                    // ignore
-                  } finally {
-                    setBusyId(null);
-                    setPendingDelete(null);
-                  }
-                }}
-                className="btn-danger flex-1"
-              >
-                Delete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -283,7 +247,6 @@ function SingleItemCard({
   avgDuration,
   onAdjust,
   onEdit,
-  onDelete,
 }: {
   item: InventoryItem;
   query: string;
@@ -291,7 +254,6 @@ function SingleItemCard({
   avgDuration?: number | null;
   onAdjust: (e: React.MouseEvent, id: string, delta: number) => Promise<void>;
   onEdit: (item: InventoryItem) => void;
-  onDelete: (item: InventoryItem) => void;
 }) {
   const isConsumable = item.consumable !== false;
   const out = isConsumable && item.count === 0;
@@ -387,13 +349,6 @@ function SingleItemCard({
         >
           <Plus className="h-4 w-4" />
         </button>
-        <button
-          onClick={() => onDelete(item)}
-          className="touch-target bg-red-950/40 hover:bg-red-900/60 text-red-400 rounded-lg grid place-items-center active:scale-90 transition ml-auto"
-          aria-label={`Delete ${item.product}`}
-        >
-          <Trash2 className="h-4 w-4" />
-        </button>
       </div>
     </li>
   );
@@ -408,7 +363,6 @@ function ProductGroupCard({
   statsMap,
   onAdjust,
   onEdit,
-  onDelete,
 }: {
   group: ProductGroup;
   query: string;
@@ -418,7 +372,6 @@ function ProductGroupCard({
   statsMap: Map<string, { averageDays: number | null }>;
   onAdjust: (e: React.MouseEvent, id: string, delta: number) => Promise<void>;
   onEdit: (item: InventoryItem) => void;
-  onDelete: (item: InventoryItem) => void;
 }) {
   const sortedItems = [...group.items].sort((a, b) => {
     const brandCompare = (a.brand ?? '').localeCompare(b.brand ?? '');
@@ -480,7 +433,6 @@ function ProductGroupCard({
               avgDuration={statsMap.get(it.id)?.averageDays}
               onAdjust={onAdjust}
               onEdit={onEdit}
-              onDelete={onDelete}
             />
           ))}
         </div>
@@ -496,7 +448,6 @@ function GroupRow({
   avgDuration,
   onAdjust,
   onEdit,
-  onDelete,
 }: {
   item: InventoryItem;
   query: string;
@@ -504,7 +455,6 @@ function GroupRow({
   avgDuration?: number | null;
   onAdjust: (e: React.MouseEvent, id: string, delta: number) => Promise<void>;
   onEdit: (item: InventoryItem) => void;
-  onDelete: (item: InventoryItem) => void;
 }) {
   const isConsumable = item.consumable !== false;
   const out = isConsumable && item.count === 0;
@@ -597,13 +547,6 @@ function GroupRow({
           aria-label={`Increase ${item.product}`}
         >
           <Plus className="h-4 w-4" />
-        </button>
-        <button
-          onClick={() => onDelete(item)}
-          className="touch-target bg-red-950/40 hover:bg-red-900/60 text-red-400 rounded-lg grid place-items-center active:scale-90 transition ml-auto"
-          aria-label={`Delete ${item.product}`}
-        >
-          <Trash2 className="h-4 w-4" />
         </button>
       </div>
     </div>

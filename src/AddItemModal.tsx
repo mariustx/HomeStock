@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, AlertTriangle } from 'lucide-react';
+import { ChevronDown, AlertTriangle, Trash2 } from 'lucide-react';
 import type { InventoryItem, ProductInput, TrackingMode, PriceBasis } from './types';
 import {
   timestamptzToDateInput,
@@ -29,6 +29,7 @@ interface AddItemModalProps {
   existingItems?: InventoryItem[];
   onClose: () => void;
   onSave: (input: ProductInput) => Promise<void>;
+  onDelete?: (id: string) => Promise<void>;
 }
 
 interface ProductFormState {
@@ -79,7 +80,7 @@ function formsEqual(a: ProductFormState, b: ProductFormState): boolean {
   return JSON.stringify(a) === JSON.stringify(b);
 }
 
-export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, onSave }: AddItemModalProps) {
+export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, onSave, onDelete }: AddItemModalProps) {
   const [form, setForm] = useState<ProductFormState>(DEFAULTS);
   const [initialForm, setInitialForm] = useState<ProductFormState>(DEFAULTS);
   const [submitting, setSubmitting] = useState(false);
@@ -88,6 +89,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
   const [touched, setTouched] = useState<Record<string, boolean>>({});
   const [suggestionsVisible, setSuggestionsVisible] = useState(false);
   const [showDiscardConfirm, setShowDiscardConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [storeSuggestions, setStoreSuggestions] = useState<string[]>([]);
   const isEdit = !!itemToEdit;
   const originalProductRef = useRef<string>('');
@@ -164,6 +166,7 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
       setTouched({});
       setSuggestionsVisible(false);
       setShowDiscardConfirm(false);
+      setShowDeleteConfirm(false);
       fetchStoreSuggestions().then(setStoreSuggestions).catch(() => {});
     }
   }, [open, itemToEdit]);
@@ -335,6 +338,20 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
       onClose();
     } catch (e) {
       setErr(e instanceof Error ? e.message : 'Failed to save item.');
+      setSubmitting(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!itemToEdit || !onDelete) return;
+    setSubmitting(true);
+    setErr(null);
+    try {
+      await onDelete(itemToEdit.id);
+      setShowDeleteConfirm(false);
+      onClose();
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'Failed to delete product.');
       setSubmitting(false);
     }
   };
@@ -747,6 +764,19 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                   {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create product'}
                 </button>
               }
+              secondary={
+                isEdit && onDelete ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteConfirm(true)}
+                    disabled={submitting}
+                    className="w-full h-11 px-4 rounded-xl bg-neutral-800/80 hover:bg-red-950/50 text-neutral-400 hover:text-red-400 border border-neutral-700/60 hover:border-red-800/60 font-medium text-sm active:scale-[0.98] transition flex items-center justify-center gap-2"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete product
+                  </button>
+                ) : undefined
+              }
             />
           </form>
         </div>
@@ -781,6 +811,41 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                   className="w-full h-11 px-4 rounded-xl bg-neutral-800 hover:bg-neutral-700 text-red-400 font-medium text-sm active:scale-[0.98] transition"
                 >
                   Discard changes
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete confirmation dialog */}
+      {showDeleteConfirm && itemToEdit && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-[fadeIn_120ms_ease-out]">
+          <div className="w-full max-w-xs bg-neutral-900 border border-neutral-800 rounded-2xl p-5 shadow-2xl">
+            <div className="flex flex-col items-center text-center">
+              <div className="h-12 w-12 rounded-full bg-red-500/15 border border-red-500/30 grid place-items-center mb-3">
+                <Trash2 className="h-6 w-6 text-red-400" />
+              </div>
+              <h3 className="text-base font-semibold text-white mb-1">Delete product?</h3>
+              <p className="text-sm text-neutral-400 mb-5">
+                This removes <span className="text-white">{itemToEdit.brand ?? itemToEdit.product}</span> and its restock &amp; consumption history. This cannot be undone.
+              </p>
+              <div className="w-full space-y-2">
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={submitting}
+                  className="btn-primary w-full"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={handleDelete}
+                  disabled={submitting}
+                  className="w-full h-11 px-4 rounded-xl bg-red-600 hover:bg-red-500 text-white font-medium text-sm active:scale-[0.98] transition"
+                >
+                  {submitting ? 'Deleting…' : 'Delete product'}
                 </button>
               </div>
             </div>
