@@ -9,7 +9,6 @@ interface InventoryViewProps {
   loading: boolean;
   error: string | null;
   onAdjust: (id: string, delta: number) => Promise<void>;
-  onDelete?: (id: string) => Promise<void>;
   onEdit: (item: InventoryItem) => void;
   onAdd?: () => void;
 }
