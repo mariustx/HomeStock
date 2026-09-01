@@ -63,29 +63,9 @@ function MetricCard({ label, value, sub, icon, tone }: MetricCardProps) {
 
 export function ItemHeroMetrics({ item, priceStats, consumptionStats }: ItemHeroMetricsProps) {
   const isConsumable = item.consumable !== false;
-  const isOut = isConsumable && item.count === 0;
-  const isLow = isConsumable && !isOut && item.min_stock > 0 && item.count <= item.min_stock;
 
-  // --- Metric 1: Current Stock ---
-  const stockTone: MetricCardProps['tone'] = isOut ? 'red' : isLow ? 'amber' : 'neutral';
-  const stockSub = isOut
-    ? 'Out of stock'
-    : isLow
-      ? `Min: ${item.min_stock} ${pluralize(item.unit, item.min_stock)}`
-      : item.min_stock > 0
-        ? `Min: ${item.min_stock} · Healthy`
-        : null;
-
-  const metric1: MetricCardProps = {
-    label: isConsumable ? 'Current stock' : 'Quantity owned',
-    value: `${item.count} ${pluralize(item.unit, item.count)}`,
-    sub: stockSub,
-    icon: <Package className="h-3.5 w-3.5" />,
-    tone: stockTone,
-  };
-
-  // --- Metric 2: Latest Price ---
-  const metric2: MetricCardProps = priceStats
+  // --- Metric 1: Latest Price ---
+  const metricLatest: MetricCardProps = priceStats
     ? {
         label: 'Latest price',
         value: priceStats.latestPriceDisplay,
@@ -101,8 +81,8 @@ export function ItemHeroMetrics({ item, priceStats, consumptionStats }: ItemHero
         tone: 'neutral',
       };
 
-  // --- Metric 3: Lowest Price ---
-  const metric3: MetricCardProps = priceStats
+  // --- Metric 2: Lowest Price ---
+  const metricLowest: MetricCardProps = priceStats
     ? {
         label: 'Lowest price',
         value: priceStats.lowestPriceDisplay,
@@ -118,76 +98,94 @@ export function ItemHeroMetrics({ item, priceStats, consumptionStats }: ItemHero
         tone: 'neutral',
       };
 
-  // --- Metric 4: Conditional based on item type & data availability ---
-  let metric4: MetricCardProps;
-
-  if (isConsumable && consumptionStats) {
-    const daysRemaining = calculateDaysRemaining(item.opened_at, item.count, consumptionStats);
-
-    if (daysRemaining !== null) {
-      metric4 = {
-        label: 'Est. days left',
-        value: `~${daysRemaining} days`,
-        sub: consumptionStats.averageDays !== null
-          ? `Avg ${Math.round(consumptionStats.averageDays)}d/unit`
-          : null,
-        icon: <Calendar className="h-3.5 w-3.5" />,
-        tone: daysRemaining <= 7 ? 'red' : daysRemaining <= 14 ? 'amber' : 'emerald',
-      };
-    } else if (consumptionStats.openingsCount > 0) {
-      // Has opening events, but not enough for average yet
-      metric4 = {
-        label: 'Est. days left',
-        value: 'Not enough data',
-        sub: 'Need 2+ openings',
-        icon: <AlertCircle className="h-3.5 w-3.5" />,
+  // --- Metric 3: Avg Price ---
+  const metricAvg: MetricCardProps = priceStats
+    ? {
+        label: 'Avg price',
+        value: `${priceStats.avgPrice.toFixed(2)} RON`,
+        sub: `${priceStats.count} ${priceStats.count === 1 ? 'record' : 'records'}`,
+        icon: <TrendingUp className="h-3.5 w-3.5" />,
+        tone: 'amber',
+      }
+    : {
+        label: 'Avg price',
+        value: '—',
+        sub: 'No price history yet',
+        icon: <TrendingUp className="h-3.5 w-3.5" />,
         tone: 'neutral',
       };
+
+  // --- Metric 4: Est. Days Left (consumables) or Last Purchase (non-consumables) ---
+  let metricFourth: MetricCardProps;
+
+  if (isConsumable) {
+    if (consumptionStats) {
+      const daysRemaining = calculateDaysRemaining(item.opened_at, item.count, consumptionStats);
+
+      if (daysRemaining !== null) {
+        metricFourth = {
+          label: 'Est. days left',
+          value: `~${daysRemaining} days`,
+          sub: consumptionStats.averageDays !== null
+            ? `Avg ${Math.round(consumptionStats.averageDays)}d/unit`
+            : null,
+          icon: <Calendar className="h-3.5 w-3.5" />,
+          tone: daysRemaining <= 7 ? 'red' : daysRemaining <= 14 ? 'amber' : 'emerald',
+        };
+      } else if (consumptionStats.openingsCount > 0) {
+        // Has opening events, but not enough for average yet
+        metricFourth = {
+          label: 'Est. days left',
+          value: 'Not enough data',
+          sub: 'Need 2+ openings',
+          icon: <AlertCircle className="h-3.5 w-3.5" />,
+          tone: 'neutral',
+        };
+      } else {
+        metricFourth = {
+          label: 'Est. days left',
+          value: '—',
+          sub: 'No openings yet',
+          icon: <Calendar className="h-3.5 w-3.5" />,
+          tone: 'neutral',
+        };
+      }
     } else {
-      // No openings at all — show avg price instead
-      metric4 = priceStats
-        ? {
-            label: 'Avg price',
-            value: `${priceStats.avgPrice.toFixed(2)} RON`,
-            sub: `${priceStats.count} ${priceStats.count === 1 ? 'record' : 'records'}`,
-            icon: <TrendingUp className="h-3.5 w-3.5" />,
-            tone: 'amber',
-          }
-        : {
-            label: 'Avg price',
-            value: '—',
-            sub: 'No price history yet',
-            icon: <TrendingUp className="h-3.5 w-3.5" />,
-            tone: 'neutral',
-          };
+      metricFourth = {
+        label: 'Est. days left',
+        value: '—',
+        sub: 'No consumption data',
+        icon: <Calendar className="h-3.5 w-3.5" />,
+        tone: 'neutral',
+      };
     }
   } else {
-    // Non-consumable: show average price or date added
-    metric4 = priceStats
+    // Non-consumables: Estimated Days Left does not apply -> show Last Purchase
+    metricFourth = priceStats
       ? {
-          label: 'Avg price',
-          value: `${priceStats.avgPrice.toFixed(2)} RON`,
-          sub: `${priceStats.count} ${priceStats.count === 1 ? 'record' : 'records'}`,
-          icon: <TrendingUp className="h-3.5 w-3.5" />,
-          tone: 'amber',
+          label: 'Last purchase',
+          value: priceStats.latestDate,
+          sub: priceStats.latestStore || 'Recorded in restocks',
+          icon: <Calendar className="h-3.5 w-3.5" />,
+          tone: 'neutral',
         }
       : {
           label: 'Added',
           value: item.created_at
             ? new Date(item.created_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })
             : '—',
-          sub: null,
+          sub: 'Date added',
           icon: <Calendar className="h-3.5 w-3.5" />,
           tone: 'neutral',
         };
   }
 
   return (
-    <div className="grid grid-cols-2 gap-2 px-4 py-3">
-      <MetricCard {...metric1} />
-      <MetricCard {...metric2} />
-      <MetricCard {...metric3} />
-      <MetricCard {...metric4} />
+    <div className="grid grid-cols-2 gap-2 px-4 py-2">
+      <MetricCard {...metricLatest} />
+      <MetricCard {...metricLowest} />
+      <MetricCard {...metricAvg} />
+      <MetricCard {...metricFourth} />
     </div>
   );
 }
