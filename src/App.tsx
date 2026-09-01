@@ -2,11 +2,13 @@ import { useRef, useState, lazy, Suspense } from 'react';
 import { Package, ShoppingCart, BarChart3, Plus, AlertTriangle } from 'lucide-react';
 import type { TabKey, InventoryItem, ShoppingItem, ProductInput, RestockInput, ShoppingItemInput } from './types';
 import { useInventory, useShoppingItems } from './hooks';
+import { db } from './db';
 import { InventoryView } from './InventoryView';
 import { ShoppingView } from './ShoppingView';
 import { AddItemModal } from './AddItemModal';
 import { ShoppingItemModal } from './ShoppingItemModal';
 import { MoreMenu } from './MoreMenu';
+import { ItemDashboardModal } from './components/item-dashboard/ItemDashboardModal';
 
 const InsightsView = lazy(() => import('./InsightsView').then(m => ({ default: m.InsightsView })));
 
@@ -30,6 +32,7 @@ export default function App() {
   const [tab, setTab] = useState<TabKey>('inventory');
   const [showAdd, setShowAdd] = useState(false);
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null);
+  const [dashboardItem, setDashboardItem] = useState<InventoryItem | null>(null);
   const [showShoppingAdd, setShowShoppingAdd] = useState(false);
   const [editingShoppingItem, setEditingShoppingItem] = useState<ShoppingItem | null>(null);
   const touchStartX = useRef(0);
@@ -67,10 +70,19 @@ export default function App() {
     setShowAdd(true);
   };
 
+  /** Open the read-only item dashboard (default action when tapping an item card). */
+  const openItemDashboard = (item: InventoryItem) => {
+    setDashboardItem(item);
+  };
+
+  /** Open the edit form directly (called from the dashboard's Edit button or from shopping list). */
   const openEditProduct = (item: InventoryItem) => {
+    setDashboardItem(null);
     setShowAdd(false);
     setEditingItem(item);
   };
+
+  const closeDashboard = () => setDashboardItem(null);
 
   const closeShoppingModal = () => {
     setShowShoppingAdd(false);
@@ -128,6 +140,16 @@ export default function App() {
 
   const handleRestock = async (id: string, input: RestockInput) => {
     await restock(id, input);
+  };
+
+  /** Toggle is_on_manual_list for an inventory item from the dashboard. */
+  const handleToggleShoppingList = async (id: string) => {
+    const existing = items.find((it) => it.id === id);
+    if (!existing) return;
+    const next = !existing.is_on_manual_list;
+    await db.inventory.update(id, { is_on_manual_list: next });
+    // Reload to keep items state in sync
+    reload();
   };
 
   return (
@@ -188,7 +210,7 @@ export default function App() {
             error={error}
             onAdjust={adjustCount}
             onDelete={deleteItem}
-            onEdit={openEditProduct}
+            onEdit={openItemDashboard}
             onAdd={openAddProduct}
           />
         )}
@@ -241,6 +263,17 @@ export default function App() {
         onClose={closeShoppingModal}
         onSave={handleSaveShopping}
       />
+
+      {dashboardItem && (
+        <ItemDashboardModal
+          item={dashboardItem}
+          onClose={closeDashboard}
+          onEdit={() => openEditProduct(dashboardItem)}
+          onAdjust={adjustCount}
+          onRestock={handleRestock}
+          onToggleShoppingList={handleToggleShoppingList}
+        />
+      )}
     </div>
   );
 }

@@ -12,6 +12,7 @@ import {
 } from './types';
 import { PriceInput, DateInput, StoreInput } from './components/PurchaseFields';
 import { ConsumptionHistoryEditor } from './components/ConsumptionHistoryEditor';
+import { StickyFormActions } from './components/item-dashboard/StickyFormActions';
 import {
   emptyPurchaseState,
   parsePurchase,
@@ -732,19 +733,21 @@ export function AddItemModal({ open, itemToEdit, existingItems = [], onClose, on
                 </div>
               )}
 
-              {err && <p className="text-sm text-red-400 text-center">{err}</p>}
+              {/* Error and sticky footer moved to StickyFormActions below */}
             </div>
 
-            {/* Pinned footer */}
-            <div className="shrink-0 px-5 pt-1 pb-6 border-t border-neutral-800/60">
-              <button
-                type="submit"
-                disabled={!formValid || submitting}
-                className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed"
-              >
-                {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create product'}
-              </button>
-            </div>
+            <StickyFormActions
+              error={err}
+              primary={
+                <button
+                  type="submit"
+                  disabled={!formValid || submitting}
+                  className="btn-primary w-full disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {submitting ? 'Saving…' : isEdit ? 'Save changes' : 'Create product'}
+                </button>
+              }
+            />
           </form>
         </div>
       </div>
